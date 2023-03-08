@@ -1,4 +1,4 @@
-from .. import pre_reqs
+import pre_reqs
 import cv2
 import numpy as np
 import streamlit as st
