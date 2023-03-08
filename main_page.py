@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+os.system("mim install mmcv>=2.0.0rc4")
 # https://huggingface.co/spaces/KyanChen/ai-photo-gallery
 
 st.set_page_config(

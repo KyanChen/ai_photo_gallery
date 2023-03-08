@@ -1,8 +1,7 @@
-opencv-python_headless
-torch --extra-index-url https://download.pytorch.org/whl/cpu
-torchvision --extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
 openmim
-mmcv>=2.0.0rc4 -f https://download.openmmlab.com/mmcv/dist/cpu/torch1.13/index.html
+mmcv>=2.0.0rc4
 streamlit
 watchdog
 terminaltables
