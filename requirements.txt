@@ -1,7 +1,6 @@
 torch
 torchvision
 openmim
-mmcv>=2.0.0rc4
 streamlit
 watchdog
 terminaltables
