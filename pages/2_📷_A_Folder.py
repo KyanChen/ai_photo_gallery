@@ -1,3 +1,4 @@
+from .. import pre_reqs
 import glob
 import os.path
 
