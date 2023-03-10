@@ -2,6 +2,9 @@ import pre_reqs
 import streamlit as st
 # https://huggingface.co/spaces/KyanChen/ai-photo-gallery
 
+# streamlit run app.py --server.port 9001
+
+
 st.set_page_config(
     page_title="AI photo Gallery",
     page_icon="👋",
