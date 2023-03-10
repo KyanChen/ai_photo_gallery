@@ -2,7 +2,7 @@ import pre_reqs
 import streamlit as st
 # https://huggingface.co/spaces/KyanChen/ai-photo-gallery
 
-# streamlit run app.py --server.port 9001
+# streamlit run main_page.py --server.port 8501
 
 
 st.set_page_config(
