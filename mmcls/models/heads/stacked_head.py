@@ -1,17 +1,16 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Sequence
 
-import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from mmcv.cnn import build_activation_layer, build_norm_layer
-from mmengine.model import BaseModule, ModuleList
+from mmcv.runner import BaseModule, ModuleList
 
-from mmcls.registry import MODELS
+from ..builder import HEADS
 from .cls_head import ClsHead
 
 
 class LinearBlock(BaseModule):
-    """Linear block for StackedLinearClsHead."""
 
     def __init__(self,
                  in_channels,
@@ -35,7 +34,6 @@ class LinearBlock(BaseModule):
             self.dropout = nn.Dropout(p=dropout_rate)
 
     def forward(self, x):
-        """The forward process."""
         x = self.fc(x)
         if self.norm is not None:
             x = self.norm(x)
@@ -46,15 +44,14 @@ class LinearBlock(BaseModule):
         return x
 
 
-@MODELS.register_module()
+@HEADS.register_module()
 class StackedLinearClsHead(ClsHead):
     """Classifier head with several hidden fc layer and a output fc layer.
 
     Args:
         num_classes (int): Number of categories.
         in_channels (int): Number of channels in the input feature map.
-        mid_channels (Sequence[int]): Number of channels in the hidden fc
-            layers.
+        mid_channels (Sequence): Number of channels in the hidden fc layers.
         dropout_rate (float): Dropout rate after each hidden fc layer,
             except the last layer. Defaults to 0.
         norm_cfg (dict, optional): Config dict of normalization layer after
@@ -66,17 +63,18 @@ class StackedLinearClsHead(ClsHead):
     def __init__(self,
                  num_classes: int,
                  in_channels: int,
-                 mid_channels: Sequence[int],
+                 mid_channels: Sequence,
                  dropout_rate: float = 0.,
-                 norm_cfg: Optional[Dict] = None,
-                 act_cfg: Optional[Dict] = dict(type='ReLU'),
+                 norm_cfg: Dict = None,
+                 act_cfg: Dict = dict(type='ReLU'),
                  **kwargs):
         super(StackedLinearClsHead, self).__init__(**kwargs)
+        assert num_classes > 0, \
+            f'`num_classes` of StackedLinearClsHead must be a positive ' \
+            f'integer, got {num_classes} instead.'
         self.num_classes = num_classes
+
         self.in_channels = in_channels
-        if self.num_classes <= 0:
-            raise ValueError(
-                f'num_classes={num_classes} must be a positive integer')
 
         assert isinstance(mid_channels, Sequence), \
             f'`mid_channels` of StackedLinearClsHead should be a sequence, ' \
@@ -90,7 +88,6 @@ class StackedLinearClsHead(ClsHead):
         self._init_layers()
 
     def _init_layers(self):
-        """"Init layers."""
         self.layers = ModuleList()
         in_channels = self.in_channels
         for hidden_channels in self.mid_channels:
@@ -111,25 +108,56 @@ class StackedLinearClsHead(ClsHead):
                 norm_cfg=None,
                 act_cfg=None))
 
-    def pre_logits(self, feats: Tuple[torch.Tensor]) -> torch.Tensor:
-        """The process before the final classification head.
+    def init_weights(self):
+        self.layers.init_weights()
 
-        The input ``feats`` is a tuple of tensor, and each tensor is the
-        feature of a backbone stage.
-        """
-        x = feats[-1]
+    def pre_logits(self, x):
+        if isinstance(x, tuple):
+            x = x[-1]
         for layer in self.layers[:-1]:
             x = layer(x)
         return x
 
     @property
     def fc(self):
-        """Full connected layer."""
         return self.layers[-1]
 
-    def forward(self, feats: Tuple[torch.Tensor]) -> torch.Tensor:
-        """The forward process."""
-        pre_logits = self.pre_logits(feats)
-        # The final classification head.
-        cls_score = self.fc(pre_logits)
-        return cls_score
+    def simple_test(self, x, softmax=True, post_process=True):
+        """Inference without augmentation.
+
+        Args:
+            x (tuple[Tensor]): The input features.
+                Multi-stage inputs are acceptable but only the last stage will
+                be used to classify. The shape of every item should be
+                ``(num_samples, in_channels)``.
+            softmax (bool): Whether to softmax the classification score.
+            post_process (bool): Whether to do post processing the
+                inference results. It will convert the output to a list.
+
+        Returns:
+            Tensor | list: The inference results.
+
+                - If no post processing, the output is a tensor with shape
+                  ``(num_samples, num_classes)``.
+                - If post processing, the output is a multi-dimentional list of
+                  float and the dimensions are ``(num_samples, num_classes)``.
+        """
+        x = self.pre_logits(x)
+        cls_score = self.fc(x)
+
+        if softmax:
+            pred = (
+                F.softmax(cls_score, dim=1) if cls_score is not None else None)
+        else:
+            pred = cls_score
+
+        if post_process:
+            return self.post_process(pred)
+        else:
+            return pred
+
+    def forward_train(self, x, gt_label, **kwargs):
+        x = self.pre_logits(x)
+        cls_score = self.fc(x)
+        losses = self.loss(cls_score, gt_label, **kwargs)
+        return losses

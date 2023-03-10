@@ -10,7 +10,7 @@ import torch.utils.checkpoint as cp
 from mmcv.cnn.bricks import build_activation_layer, build_norm_layer
 from torch.jit.annotations import List
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
@@ -144,7 +144,7 @@ class DenseTransition(nn.Sequential):
         self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2))
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class DenseNet(BaseBackbone):
     """DenseNet.
 

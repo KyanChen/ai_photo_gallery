@@ -1,6 +1,7 @@
 torch
 torchvision
-mmcv==2.0.0rc4
+openmim
+mmcv-full
 streamlit
 watchdog
 terminaltables

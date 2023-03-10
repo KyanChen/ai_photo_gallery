@@ -8,11 +8,11 @@ import torch.nn as nn
 import torch.utils.checkpoint as cp
 from mmcv.cnn import build_norm_layer
 from mmcv.cnn.bricks.transformer import FFN, PatchEmbed, PatchMerging
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import trunc_normal_
-from mmengine.utils.dl_utils.parrots_wrapper import _BatchNorm
+from mmcv.cnn.utils.weight_init import trunc_normal_
+from mmcv.runner.base_module import BaseModule, ModuleList
+from mmcv.utils.parrots_wrapper import _BatchNorm
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from ..utils import (ShiftWindowMSA, resize_pos_embed,
                      resize_relative_position_bias_table, to_2tuple)
 from .base_backbone import BaseBackbone
@@ -201,7 +201,7 @@ class SwinBlockSequence(BaseModule):
             return self.embed_dims
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class SwinTransformer(BaseBackbone):
     """Swin Transformer.
 
@@ -501,8 +501,8 @@ class SwinTransformer(BaseBackbone):
 
         ckpt_pos_embed_shape = state_dict[name].shape
         if self.absolute_pos_embed.shape != ckpt_pos_embed_shape:
-            from mmengine.logging import MMLogger
-            logger = MMLogger.get_current_instance()
+            from mmcls.utils import get_root_logger
+            logger = get_root_logger()
             logger.info(
                 'Resize the absolute_pos_embed shape from '
                 f'{ckpt_pos_embed_shape} to {self.absolute_pos_embed.shape}.')
@@ -536,8 +536,8 @@ class SwinTransformer(BaseBackbone):
                     new_rel_pos_bias = resize_relative_position_bias_table(
                         src_size, dst_size,
                         relative_position_bias_table_pretrained, nH1)
-                    from mmengine.logging import MMLogger
-                    logger = MMLogger.get_current_instance()
+                    from mmcls.utils import get_root_logger
+                    logger = get_root_logger()
                     logger.info('Resize the relative_position_bias_table from '
                                 f'{state_dict[ckpt_key].shape} to '
                                 f'{new_rel_pos_bias.shape}')

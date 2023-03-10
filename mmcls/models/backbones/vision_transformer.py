@@ -6,10 +6,11 @@ import torch
 import torch.nn as nn
 from mmcv.cnn import build_norm_layer
 from mmcv.cnn.bricks.transformer import FFN, PatchEmbed
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import trunc_normal_
+from mmcv.cnn.utils.weight_init import trunc_normal_
+from mmcv.runner.base_module import BaseModule, ModuleList
 
-from mmcls.registry import MODELS
+from mmcls.utils import get_root_logger
+from ..builder import BACKBONES
 from ..utils import MultiheadAttention, resize_pos_embed, to_2tuple
 from .base_backbone import BaseBackbone
 
@@ -98,7 +99,7 @@ class TransformerEncoderLayer(BaseModule):
         return x
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class VisionTransformer(BaseBackbone):
     """Vision Transformer.
 
@@ -136,11 +137,6 @@ class VisionTransformer(BaseBackbone):
             final feature map. Defaults to True.
         with_cls_token (bool): Whether concatenating class token into image
             tokens as transformer input. Defaults to True.
-        avg_token (bool): Whether or not to use the mean patch token for
-            classification. If True, the model will only take the average
-            of all patch tokens. Defaults to False.
-        frozen_stages (int): Stages to be frozen (stop grad and set eval mode).
-            -1 means not freezing any parameters. Defaults to -1.
         output_cls_token (bool): Whether output the cls_token. If set True,
             ``with_cls_token`` must be True. Defaults to True.
         interpolate_mode (str): Select the interpolate mode for position
@@ -172,26 +168,6 @@ class VisionTransformer(BaseBackbone):
                 'num_layers': 24,
                 'num_heads': 16,
                 'feedforward_channels': 4096
-            }),
-        **dict.fromkeys(
-            ['h', 'huge'],
-            {
-                # The same as the implementation in MAE
-                # <https://arxiv.org/abs/2111.06377>
-                'embed_dims': 1280,
-                'num_layers': 32,
-                'num_heads': 16,
-                'feedforward_channels': 5120
-            }),
-        **dict.fromkeys(
-            ['eva-g', 'eva-giant'],
-            {
-                # The implementation in EVA
-                # <https://arxiv.org/abs/2211.07636>
-                'embed_dims': 1408,
-                'num_layers': 40,
-                'num_heads': 16,
-                'feedforward_channels': 6144
             }),
         **dict.fromkeys(
             ['deit-t', 'deit-tiny'], {
@@ -230,13 +206,10 @@ class VisionTransformer(BaseBackbone):
                  norm_cfg=dict(type='LN', eps=1e-6),
                  final_norm=True,
                  with_cls_token=True,
-                 avg_token=False,
-                 frozen_stages=-1,
                  output_cls_token=True,
                  interpolate_mode='bicubic',
                  patch_cfg=dict(),
                  layer_cfgs=dict(),
-                 pre_norm=False,
                  init_cfg=None):
         super(VisionTransformer, self).__init__(init_cfg)
 
@@ -265,7 +238,6 @@ class VisionTransformer(BaseBackbone):
             conv_type='Conv2d',
             kernel_size=patch_size,
             stride=patch_size,
-            bias=not pre_norm,  # disable bias if pre_norm is used(e.g., CLIP)
         )
         _patch_cfg.update(patch_cfg)
         self.patch_embed = PatchEmbed(**_patch_cfg)
@@ -320,44 +292,22 @@ class VisionTransformer(BaseBackbone):
             _layer_cfg.update(layer_cfgs[i])
             self.layers.append(TransformerEncoderLayer(**_layer_cfg))
 
-        self.frozen_stages = frozen_stages
-        if pre_norm:
-            _, norm_layer = build_norm_layer(
-                norm_cfg, self.embed_dims, postfix=1)
-        else:
-            norm_layer = nn.Identity()
-        self.add_module('pre_norm', norm_layer)
-
         self.final_norm = final_norm
         if final_norm:
             self.norm1_name, norm1 = build_norm_layer(
                 norm_cfg, self.embed_dims, postfix=1)
             self.add_module(self.norm1_name, norm1)
 
-        self.avg_token = avg_token
-        if avg_token:
-            self.norm2_name, norm2 = build_norm_layer(
-                norm_cfg, self.embed_dims, postfix=2)
-            self.add_module(self.norm2_name, norm2)
-        # freeze stages only when self.frozen_stages > 0
-        if self.frozen_stages > 0:
-            self._freeze_stages()
-
     @property
     def norm1(self):
         return getattr(self, self.norm1_name)
-
-    @property
-    def norm2(self):
-        return getattr(self, self.norm2_name)
 
     def init_weights(self):
         super(VisionTransformer, self).init_weights()
 
         if not (isinstance(self.init_cfg, dict)
                 and self.init_cfg['type'] == 'Pretrained'):
-            if self.pos_embed is not None:
-                trunc_normal_(self.pos_embed, std=0.02)
+            trunc_normal_(self.pos_embed, std=0.02)
 
     def _prepare_pos_embed(self, state_dict, prefix, *args, **kwargs):
         name = prefix + 'pos_embed'
@@ -366,11 +316,12 @@ class VisionTransformer(BaseBackbone):
 
         ckpt_pos_embed_shape = state_dict[name].shape
         if self.pos_embed.shape != ckpt_pos_embed_shape:
-            from mmengine.logging import MMLogger
-            logger = MMLogger.get_current_instance()
-            logger.info(
+            from mmcv.utils import print_log
+            logger = get_root_logger()
+            print_log(
                 f'Resize the pos_embed shape from {ckpt_pos_embed_shape} '
-                f'to {self.pos_embed.shape}.')
+                f'to {self.pos_embed.shape}.',
+                logger=logger)
 
             ckpt_pos_embed_shape = to_2tuple(
                 int(np.sqrt(ckpt_pos_embed_shape[1] - self.num_extra_tokens)))
@@ -387,30 +338,6 @@ class VisionTransformer(BaseBackbone):
         """Interface for backward-compatibility."""
         return resize_pos_embed(*args, **kwargs)
 
-    def _freeze_stages(self):
-        # freeze position embedding
-        if self.pos_embed is not None:
-            self.pos_embed.requires_grad = False
-        # set dropout to eval model
-        self.drop_after_pos.eval()
-        # freeze patch embedding
-        self.patch_embed.eval()
-        for param in self.patch_embed.parameters():
-            param.requires_grad = False
-        # freeze cls_token
-        self.cls_token.requires_grad = False
-        # freeze layers
-        for i in range(1, self.frozen_stages + 1):
-            m = self.layers[i - 1]
-            m.eval()
-            for param in m.parameters():
-                param.requires_grad = False
-        # freeze the last layer norm
-        if self.frozen_stages == len(self.layers) and self.final_norm:
-            self.norm1.eval()
-            for param in self.norm1.parameters():
-                param.requires_grad = False
-
     def forward(self, x):
         B = x.shape[0]
         x, patch_resolution = self.patch_embed(x)
@@ -426,7 +353,6 @@ class VisionTransformer(BaseBackbone):
             num_extra_tokens=self.num_extra_tokens)
         x = self.drop_after_pos(x)
 
-        x = self.pre_norm(x)
         if not self.with_cls_token:
             # Remove class token for transformer encoder input
             x = x[:, 1:]
@@ -448,12 +374,6 @@ class VisionTransformer(BaseBackbone):
                     patch_token = x.reshape(B, *patch_resolution, C)
                     patch_token = patch_token.permute(0, 3, 1, 2)
                     cls_token = None
-                if self.avg_token:
-                    patch_token = patch_token.permute(0, 2, 3, 1)
-                    patch_token = patch_token.reshape(
-                        B, patch_resolution[0] * patch_resolution[1],
-                        C).mean(dim=1)
-                    patch_token = self.norm2(patch_token)
                 if self.output_cls_token:
                     out = [patch_token, cls_token]
                 else:

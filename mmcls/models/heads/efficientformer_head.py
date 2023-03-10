@@ -1,15 +1,12 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import List, Tuple
-
-import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from mmcls.registry import MODELS
-from mmcls.structures import ClsDataSample
+from ..builder import HEADS
 from .cls_head import ClsHead
 
 
-@MODELS.register_module()
+@HEADS.register_module()
 class EfficientFormerClsHead(ClsHead):
     """EfficientFormer classifier head.
 
@@ -44,46 +41,56 @@ class EfficientFormerClsHead(ClsHead):
         if self.dist:
             self.dist_head = nn.Linear(self.in_channels, self.num_classes)
 
-    def forward(self, feats: Tuple[torch.Tensor]) -> torch.Tensor:
-        """The forward process."""
-        pre_logits = self.pre_logits(feats)
-        # The final classification head.
-        cls_score = self.head(pre_logits)
+    def pre_logits(self, x):
+        if isinstance(x, tuple):
+            x = x[-1]
+        return x
 
-        if self.dist:
-            cls_score = (cls_score + self.dist_head(pre_logits)) / 2
-        return cls_score
-
-    def pre_logits(self, feats: Tuple[torch.Tensor]) -> torch.Tensor:
-        """The process before the final classification head.
-
-        The input ``feats`` is a tuple of tensor, and each tensor is the
-        feature of a backbone stage. In :obj`EfficientFormerClsHead`, we just
-        obtain the feature of the last stage.
-        """
-        # The EfficientFormerClsHead doesn't have other module, just return
-        # after unpacking.
-        return feats[-1]
-
-    def loss(self, feats: Tuple[torch.Tensor],
-             data_samples: List[ClsDataSample], **kwargs) -> dict:
-        """Calculate losses from the classification score.
+    def simple_test(self, x, softmax=True, post_process=True):
+        """Inference without augmentation.
 
         Args:
-            feats (tuple[Tensor]): The features extracted from the backbone.
-                Multiple stage inputs are acceptable but only the last stage
-                will be used to classify. The shape of every item should be
-                ``(num_samples, num_classes)``.
-            data_samples (List[ClsDataSample]): The annotation data of
-                every samples.
-            **kwargs: Other keyword arguments to forward the loss module.
+            x (tuple[tuple[tensor, tensor]]): The input features.
+                Multi-stage inputs are acceptable but only the last stage will
+                be used to classify. Every item should be a tuple which
+                includes patch token and cls token. The cls token will be used
+                to classify and the shape of it should be
+                ``(num_samples, in_channels)``.
+            softmax (bool): Whether to softmax the classification score.
+            post_process (bool): Whether to do post processing the
+                inference results. It will convert the output to a list.
 
         Returns:
-            dict[str, Tensor]: a dictionary of loss components
+            Tensor | list: The inference results.
+
+                - If no post processing, the output is a tensor with shape
+                  ``(num_samples, num_classes)``.
+                - If post processing, the output is a multi-dimentional list of
+                  float and the dimensions are ``(num_samples, num_classes)``.
         """
+        x = self.pre_logits(x)
+        cls_score = self.head(x)
+        if self.dist:
+            cls_score = (cls_score + self.dist_head(x)) / 2
+
+        if softmax:
+            pred = (
+                F.softmax(cls_score, dim=1) if cls_score is not None else None)
+        else:
+            pred = cls_score
+
+        if post_process:
+            return self.post_process(pred)
+        else:
+            return pred
+
+    def forward_train(self, x, gt_label, **kwargs):
         if self.dist:
             raise NotImplementedError(
                 "MMClassification doesn't support to train"
                 ' the distilled version EfficientFormer.')
         else:
-            return super().loss(feats, data_samples, **kwargs)
+            x = self.pre_logits(x)
+            cls_score = self.head(x)
+            losses = self.loss(cls_score, gt_label, **kwargs)
+            return losses

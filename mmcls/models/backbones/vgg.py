@@ -1,9 +1,9 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch.nn as nn
 from mmcv.cnn import ConvModule
-from mmengine.utils.dl_utils.parrots_wrapper import _BatchNorm
+from mmcv.utils.parrots_wrapper import _BatchNorm
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
@@ -35,7 +35,7 @@ def make_vgg_layer(in_channels,
     return layers
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class VGG(BaseBackbone):
     """VGG backbone.
 

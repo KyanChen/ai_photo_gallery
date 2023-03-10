@@ -2,13 +2,13 @@
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
-from mmcv.cnn import ConvModule, build_activation_layer
-from mmengine.model import BaseModule
-from mmengine.model.weight_init import constant_init, normal_init
+from mmcv.cnn import (ConvModule, build_activation_layer, constant_init,
+                      normal_init)
+from mmcv.runner import BaseModule
 from torch.nn.modules.batchnorm import _BatchNorm
 
 from mmcls.models.utils import channel_shuffle, make_divisible
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
@@ -148,7 +148,7 @@ class ShuffleUnit(BaseModule):
         return out
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ShuffleNetV1(BaseBackbone):
     """ShuffleNetV1 backbone.
 

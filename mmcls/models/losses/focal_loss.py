@@ -2,7 +2,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mmcls.registry import MODELS
+from ..builder import LOSSES
 from .utils import convert_to_one_hot, weight_reduce_loss
 
 
@@ -51,7 +51,7 @@ def sigmoid_focal_loss(pred,
     return loss
 
 
-@MODELS.register_module()
+@LOSSES.register_module()
 class FocalLoss(nn.Module):
     """Focal loss.
 

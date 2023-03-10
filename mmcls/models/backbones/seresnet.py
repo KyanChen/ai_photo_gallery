@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch.utils.checkpoint as cp
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from ..utils.se_layer import SELayer
 from .resnet import Bottleneck, ResLayer, ResNet
 
@@ -54,7 +54,7 @@ class SEBottleneck(Bottleneck):
         return out
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class SEResNet(ResNet):
     """SEResNet backbone.
 

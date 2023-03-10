@@ -6,10 +6,10 @@ import torch
 import torch.nn as nn
 from mmcv.cnn import ConvModule, DepthwiseSeparableConvModule
 from mmcv.cnn.bricks import DropPath
-from mmengine.model import BaseModule, Sequential
+from mmcv.runner import BaseModule, Sequential
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from ..utils import to_ntuple
 from .resnet import Bottleneck as ResNetBottleneck
 from .resnext import Bottleneck as ResNeXtBottleneck
@@ -404,7 +404,7 @@ class CSPNet(BaseModule):
         return tuple(outs)
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class CSPDarkNet(CSPNet):
     """CSP-Darknet backbone used in YOLOv4.
 
@@ -502,7 +502,7 @@ class CSPDarkNet(CSPNet):
         return stem
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class CSPResNet(CSPNet):
     """CSP-ResNet backbone.
 
@@ -624,7 +624,7 @@ class CSPResNet(CSPNet):
         return stem
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class CSPResNeXt(CSPResNet):
     """CSP-ResNeXt backbone.
 

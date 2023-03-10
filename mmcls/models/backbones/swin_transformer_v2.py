@@ -8,11 +8,11 @@ import torch.nn as nn
 import torch.utils.checkpoint as cp
 from mmcv.cnn import build_norm_layer
 from mmcv.cnn.bricks.transformer import FFN, PatchEmbed
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import trunc_normal_
-from mmengine.utils.dl_utils.parrots_wrapper import _BatchNorm
+from mmcv.cnn.utils.weight_init import trunc_normal_
+from mmcv.runner.base_module import BaseModule, ModuleList
+from mmcv.utils.parrots_wrapper import _BatchNorm
 
-from ..builder import MODELS
+from ..builder import BACKBONES
 from ..utils import (PatchMerging, ShiftWindowMSA, WindowMSAV2,
                      resize_pos_embed, to_2tuple)
 from .base_backbone import BaseBackbone
@@ -80,7 +80,8 @@ class SwinBlockV2(BaseModule):
         # use V2 attention implementation
         _attn_cfgs.update(
             window_msa=WindowMSAV2,
-            pretrained_window_size=to_2tuple(pretrained_window_size))
+            msa_cfg=dict(
+                pretrained_window_size=to_2tuple(pretrained_window_size)))
         self.attn = ShiftWindowMSA(**_attn_cfgs)
         self.norm1 = build_norm_layer(norm_cfg, embed_dims)[1]
 
@@ -225,7 +226,7 @@ class SwinBlockV2Sequence(BaseModule):
         return x, out_shape
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class SwinTransformerV2(BaseBackbone):
     """Swin Transformer V2.
 
@@ -246,7 +247,7 @@ class SwinTransformerV2(BaseBackbone):
             - **num_heads** (List[int]): The number of heads in attention
               modules of each stage.
             - **extra_norm_every_n_blocks** (int): Add extra norm at the end
-              of main branch every n blocks.
+            of main branch every n blocks.
 
             Defaults to 'tiny'.
         img_size (int | tuple): The expected input image shape. Because we
@@ -353,7 +354,7 @@ class SwinTransformerV2(BaseBackbone):
                  norm_eval=False,
                  pad_small_map=False,
                  norm_cfg=dict(type='LN'),
-                 stage_cfgs=dict(),
+                 stage_cfgs=dict(downsample_cfg=dict(is_post_norm=True)),
                  patch_cfg=dict(),
                  pretrained_window_sizes=[0, 0, 0, 0],
                  init_cfg=None):
@@ -445,7 +446,6 @@ class SwinTransformerV2(BaseBackbone):
                 'pad_small_map': pad_small_map,
                 'extra_norm_every_n_blocks': self.extra_norm_every_n_blocks,
                 'pretrained_window_size': pretrained_window_sizes[i],
-                'downsample_cfg': dict(use_post_norm=True),
                 **stage_cfg
             }
 
@@ -528,8 +528,8 @@ class SwinTransformerV2(BaseBackbone):
 
         ckpt_pos_embed_shape = state_dict[name].shape
         if self.absolute_pos_embed.shape != ckpt_pos_embed_shape:
-            from mmengine.logging import MMLogger
-            logger = MMLogger.get_current_instance()
+            from mmcls.utils import get_root_logger
+            logger = get_root_logger()
             logger.info(
                 'Resize the absolute_pos_embed shape from '
                 f'{ckpt_pos_embed_shape} to {self.absolute_pos_embed.shape}.')
@@ -546,13 +546,6 @@ class SwinTransformerV2(BaseBackbone):
 
     def _delete_reinit_params(self, state_dict, prefix, *args, **kwargs):
         # delete relative_position_index since we always re-init it
-        from mmengine.logging import MMLogger
-        logger = MMLogger.get_current_instance()
-        logger.info(
-            'Delete `relative_position_index` and `relative_coords_table` '
-            'since we always re-init these params according to the '
-            '`window_size`, which might cause unwanted but unworried '
-            'warnings when loading checkpoint.')
         relative_position_index_keys = [
             k for k in state_dict.keys() if 'relative_position_index' in k
         ]

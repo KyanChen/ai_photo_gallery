@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 from mmcv.cnn.bricks import (Conv2dAdaptivePadding, build_activation_layer,
                              build_norm_layer)
-from mmengine.utils import digit_version
+from mmcv.utils import digit_version
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
@@ -21,7 +21,7 @@ class Residual(nn.Module):
         return self.fn(x) + x
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ConvMixer(BaseBackbone):
     """ConvMixer.                              .
 

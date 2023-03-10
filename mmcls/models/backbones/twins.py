@@ -7,14 +7,14 @@ import torch.nn.functional as F
 from mmcv.cnn import Conv2d, build_norm_layer
 from mmcv.cnn.bricks.drop import build_dropout
 from mmcv.cnn.bricks.transformer import FFN, PatchEmbed
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import (constant_init, normal_init,
+from mmcv.cnn.utils.weight_init import (constant_init, normal_init,
                                         trunc_normal_init)
+from mmcv.runner import BaseModule, ModuleList
 from torch.nn.modules.batchnorm import _BatchNorm
 
+from mmcls.models.builder import BACKBONES
 from mmcls.models.utils.attention import MultiheadAttention
 from mmcls.models.utils.position_encoding import ConditionalPositionEncoding
-from mmcls.registry import MODELS
 
 
 class GlobalSubsampledAttention(MultiheadAttention):
@@ -347,7 +347,7 @@ class LSAEncoderLayer(BaseModule):
         return x
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class PCPVT(BaseModule):
     """The backbone of Twins-PCPVT.
 
@@ -367,21 +367,21 @@ class PCPVT(BaseModule):
             - strides (List[int]): The strides in each stage.
             - mlp_ratios (List[int]): The ratios of mlp in each stage.
             - sr_ratios (List[int]): The ratios of GSA-encoder layers in each
-              stage.
+                stage.
 
-        in_channels (int): Number of input channels. Defaults to 3.
+        in_channels (int): Number of input channels. Default: 3.
         out_indices (tuple[int]): Output from which stages.
-            Defaults to ``(3, )``.
-        qkv_bias (bool): Enable bias for qkv if True. Defaults to False.
+            Default: (3, ).
+        qkv_bias (bool): Enable bias for qkv if True. Default: False.
         drop_rate (float): Probability of an element to be zeroed.
-            Defaults to 0.
+            Default 0.
         attn_drop_rate (float): The drop out rate for attention layer.
-            Defaults to 0.0
-        drop_path_rate (float): Stochastic depth rate. Defaults to 0.0.
+            Default 0.0
+        drop_path_rate (float): Stochastic depth rate. Default 0.0
         norm_cfg (dict): Config dict for normalization layer.
-            Defaults to ``dict(type='LN')``.
+            Default: dict(type='LN')
         norm_after_stage(bool, List[bool]): Add extra norm after each stage.
-            Defaults to False.
+            Default False.
         init_cfg (dict, optional): The Config for initialization.
             Defaults to None.
 
@@ -593,7 +593,7 @@ class PCPVT(BaseModule):
         return tuple(outputs)
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class SVT(PCPVT):
     """The backbone of Twins-SVT.
 
@@ -613,22 +613,22 @@ class SVT(PCPVT):
             - strides (List[int]): The strides in each stage.
             - mlp_ratios (List[int]): The ratios of mlp in each stage.
             - sr_ratios (List[int]): The ratios of GSA-encoder layers in each
-              stage.
+                stage.
             - windiow_sizes (List[int]): The window sizes in LSA-encoder layers
-              in each stage.
+                in each stage.
 
-        in_channels (int): Number of input channels. Defaults to 3.
+        in_channels (int): Number of input channels. Default: 3.
         out_indices (tuple[int]): Output from which stages.
-            Defaults to (3, ).
-        qkv_bias (bool): Enable bias for qkv if True. Defaults to False.
-        drop_rate (float): Dropout rate. Defaults to 0.
+            Default: (3, ).
+        qkv_bias (bool): Enable bias for qkv if True. Default: False.
+        drop_rate (float): Dropout rate. Default 0.
         attn_drop_rate (float): Dropout ratio of attention weight.
-            Defaults to 0.0
-        drop_path_rate (float): Stochastic depth rate. Defaults to 0.2.
+            Default 0.0
+        drop_path_rate (float): Stochastic depth rate. Default 0.2.
         norm_cfg (dict): Config dict for normalization layer.
-            Defaults to ``dict(type='LN')``.
+            Default: dict(type='LN')
         norm_after_stage(bool, List[bool]): Add extra norm after each stage.
-            Defaults to False.
+            Default False.
         init_cfg (dict, optional): The Config for initialization.
             Defaults to None.
 

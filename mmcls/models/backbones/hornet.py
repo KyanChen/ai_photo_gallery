@@ -16,9 +16,9 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from mmcv.cnn.bricks import DropPath
 
-from mmcls.models.backbones.base_backbone import BaseBackbone
-from mmcls.registry import MODELS
+from mmcls.models.builder import BACKBONES
 from ..utils import LayerScale
+from .base_backbone import BaseBackbone
 
 
 def get_dwconv(dim, kernel_size, bias=True):
@@ -37,6 +37,7 @@ class HorNetLayerNorm(nn.Module):
 
     The differences between HorNetLayerNorm & torch LayerNorm:
         1. Supports two data formats channels_last or channels_first.
+
     Args:
         normalized_shape (int or list or torch.Size): input shape from an
             expected input of size.
@@ -248,21 +249,19 @@ class HorNetBlock(nn.Module):
         return x
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class HorNet(BaseBackbone):
-    """HorNet backbone.
+    """HorNet
+    A PyTorch impl of : `HorNet: Efficient High-Order Spatial Interactions
+    with Recursive Gated Convolutions`
 
-    A PyTorch implementation of paper `HorNet: Efficient High-Order Spatial
-    Interactions with Recursive Gated Convolutions
-    <https://arxiv.org/abs/2207.14284>`_ .
-    Inspiration from https://github.com/raoyongming/HorNet
+    Inspiration from
+    https://github.com/raoyongming/HorNet
 
     Args:
         arch (str | dict): HorNet architecture.
-
             If use string, choose from 'tiny', 'small', 'base' and 'large'.
             If use dict, it should have below keys:
-
             - **base_dim** (int): The base dimensions of embedding.
             - **depths** (List[int]): The number of blocks in each stage.
             - **orders** (List[int]): The number of order of gnConv in each
@@ -274,7 +273,7 @@ class HorNet(BaseBackbone):
         drop_path_rate (float): Stochastic depth rate. Defaults to 0.
         scale (float): Scaling parameter of gflayer outputs. Defaults to 1/3.
         use_layer_scale (bool): Whether to use use_layer_scale in HorNet
-            block. Defaults to True.
+             block. Defaults to True.
         out_indices (Sequence[int]): Output from which stages.
             Default: ``(3, )``.
         frozen_stages (int): Stages to be frozen (stop grad and set eval mode).

@@ -5,17 +5,11 @@ import os
 import os.path
 import shutil
 import tarfile
-import tempfile
 import urllib.error
 import urllib.request
 import zipfile
 
-from mmengine.fileio import LocalBackend, get_file_backend
-
-__all__ = [
-    'rm_suffix', 'check_integrity', 'download_and_extract_archive',
-    'open_maybe_compressed_file'
-]
+__all__ = ['rm_suffix', 'check_integrity', 'download_and_extract_archive']
 
 
 def rm_suffix(s, suffix=None):
@@ -25,16 +19,11 @@ def rm_suffix(s, suffix=None):
         return s[:s.rfind(suffix)]
 
 
-def calculate_md5(fpath: str, chunk_size: int = 1024 * 1024):
+def calculate_md5(fpath, chunk_size=1024 * 1024):
     md5 = hashlib.md5()
-    backend = get_file_backend(fpath, enable_singleton=True)
-    if isinstance(backend, LocalBackend):
-        # Enable chunk update for local file.
-        with open(fpath, 'rb') as f:
-            for chunk in iter(lambda: f.read(chunk_size), b''):
-                md5.update(chunk)
-    else:
-        md5.update(backend.get(fpath))
+    with open(fpath, 'rb') as f:
+        for chunk in iter(lambda: f.read(chunk_size), b''):
+            md5.update(chunk)
     return md5.hexdigest()
 
 
@@ -50,71 +39,9 @@ def check_integrity(fpath, md5=None):
     return check_md5(fpath, md5)
 
 
-def download_url_to_file(url, dst, hash_prefix=None, progress=True):
-    """Download object at the given URL to a local path.
-
-    Modified from
-    https://pytorch.org/docs/stable/hub.html#torch.hub.download_url_to_file
-
-    Args:
-        url (str): URL of the object to download
-        dst (str): Full path where object will be saved,
-            e.g. ``/tmp/temporary_file``
-        hash_prefix (string, optional): If not None, the SHA256 downloaded
-            file should start with ``hash_prefix``. Defaults to None.
-        progress (bool): whether or not to display a progress bar to stderr.
-            Defaults to True
-    """
-    file_size = None
-    req = urllib.request.Request(url)
-    u = urllib.request.urlopen(req)
-    meta = u.info()
-    if hasattr(meta, 'getheaders'):
-        content_length = meta.getheaders('Content-Length')
-    else:
-        content_length = meta.get_all('Content-Length')
-    if content_length is not None and len(content_length) > 0:
-        file_size = int(content_length[0])
-
-    # We deliberately save it in a temp file and move it after download is
-    # complete. This prevents a local file being overridden by a broken
-    # download.
-    dst = os.path.expanduser(dst)
-    dst_dir = os.path.dirname(dst)
-    f = tempfile.NamedTemporaryFile(delete=False, dir=dst_dir)
-
-    import rich.progress
-    columns = [
-        rich.progress.DownloadColumn(),
-        rich.progress.BarColumn(bar_width=None),
-        rich.progress.TimeRemainingColumn(),
-    ]
-    try:
-        if hash_prefix is not None:
-            sha256 = hashlib.sha256()
-        with rich.progress.Progress(*columns) as pbar:
-            task = pbar.add_task('download', total=file_size, visible=progress)
-            while True:
-                buffer = u.read(8192)
-                if len(buffer) == 0:
-                    break
-                f.write(buffer)
-                if hash_prefix is not None:
-                    sha256.update(buffer)
-                pbar.update(task, advance=len(buffer))
-
-        f.close()
-        if hash_prefix is not None:
-            digest = sha256.hexdigest()
-            if digest[:len(hash_prefix)] != hash_prefix:
-                raise RuntimeError(
-                    'invalid hash value (expected "{}", got "{}")'.format(
-                        hash_prefix, digest))
-        shutil.move(f.name, dst)
-    finally:
-        f.close()
-        if os.path.exists(f.name):
-            os.remove(f.name)
+def download_url_to_file(url, fpath):
+    with urllib.request.urlopen(url) as resp, open(fpath, 'wb') as of:
+        shutil.copyfileobj(resp, of)
 
 
 def download_url(url, root, filename=None, md5=None):
@@ -224,20 +151,3 @@ def download_and_extract_archive(url,
     archive = os.path.join(download_root, filename)
     print(f'Extracting {archive} to {extract_root}')
     extract_archive(archive, extract_root, remove_finished)
-
-
-def open_maybe_compressed_file(path: str):
-    """Return a file object that possibly decompresses 'path' on the fly.
-
-    Decompression occurs when argument `path` is a string and ends with '.gz'
-    or '.xz'.
-    """
-    if not isinstance(path, str):
-        return path
-    if path.endswith('.gz'):
-        import gzip
-        return gzip.open(path, 'rb')
-    if path.endswith('.xz'):
-        import lzma
-        return lzma.open(path, 'rb')
-    return open(path, 'rb')

@@ -1,12 +1,17 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from mmcls.registry import MODELS
+from mmcv.cnn import MODELS as MMCV_MODELS
+from mmcv.cnn.bricks.registry import ATTENTION as MMCV_ATTENTION
+from mmcv.utils import Registry
+
+MODELS = Registry('models', parent=MMCV_MODELS)
 
 BACKBONES = MODELS
 NECKS = MODELS
 HEADS = MODELS
 LOSSES = MODELS
 CLASSIFIERS = MODELS
-RETRIEVER = MODELS
+
+ATTENTION = Registry('attention', parent=MMCV_ATTENTION)
 
 
 def build_backbone(cfg):
@@ -30,10 +35,4 @@ def build_loss(cfg):
 
 
 def build_classifier(cfg):
-    """Build classifier."""
     return CLASSIFIERS.build(cfg)
-
-
-def build_retriever(cfg):
-    """Build retriever."""
-    return RETRIEVER.build(cfg)

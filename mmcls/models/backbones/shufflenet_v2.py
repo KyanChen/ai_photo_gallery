@@ -2,13 +2,12 @@
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
-from mmcv.cnn import ConvModule
-from mmengine.model import BaseModule
-from mmengine.model.weight_init import constant_init, normal_init
+from mmcv.cnn import ConvModule, constant_init, normal_init
+from mmcv.runner import BaseModule
 from torch.nn.modules.batchnorm import _BatchNorm
 
 from mmcls.models.utils import channel_shuffle
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
@@ -138,7 +137,7 @@ class InvertedResidual(BaseModule):
         return out
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ShuffleNetV2(BaseBackbone):
     """ShuffleNetV2 backbone.
 

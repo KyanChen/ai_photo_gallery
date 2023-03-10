@@ -1,16 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import os
+import os.path
 import pickle
-from typing import List, Optional
 
-import mmengine.dist as dist
 import numpy as np
-from mmengine.fileio import (LocalBackend, exists, get, get_file_backend,
-                             join_path)
+import torch.distributed as dist
+from mmcv.runner import get_dist_info
 
-from mmcls.registry import DATASETS
 from .base_dataset import BaseDataset
-from .categories import CIFAR10_CATEGORIES, CIFAR100_CATEGORIES
-from .utils import check_md5, download_and_extract_archive
+from .builder import DATASETS
+from .utils import check_integrity, download_and_extract_archive
 
 
 @DATASETS.register_module()
@@ -19,18 +18,6 @@ class CIFAR10(BaseDataset):
 
     This implementation is modified from
     https://github.com/pytorch/vision/blob/master/torchvision/datasets/cifar.py
-
-    Args:
-        data_prefix (str): Prefix for data.
-        test_mode (bool): ``test_mode=True`` means in test phase.
-            It determines to use the training set or test set.
-        metainfo (dict, optional): Meta information for dataset, such as
-            categories information. Defaults to None.
-        data_root (str): The root directory for ``data_prefix``.
-            Defaults to ''.
-        download (bool): Whether to download the dataset if not exists.
-            Defaults to True.
-        **kwargs: Other keyword arguments in :class:`BaseDataset`.
     """  # noqa: E501
 
     base_folder = 'cifar-10-batches-py'
@@ -53,129 +40,84 @@ class CIFAR10(BaseDataset):
         'key': 'label_names',
         'md5': '5ff9c542aee3614f3951f8cda6e48888',
     }
-    METAINFO = {'classes': CIFAR10_CATEGORIES}
+    CLASSES = [
+        'airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog',
+        'horse', 'ship', 'truck'
+    ]
 
-    def __init__(self,
-                 data_prefix: str,
-                 test_mode: bool,
-                 metainfo: Optional[dict] = None,
-                 data_root: str = '',
-                 download: bool = True,
-                 **kwargs):
-        self.download = download
-        super().__init__(
-            # The CIFAR dataset doesn't need specify annotation file
-            ann_file='',
-            metainfo=metainfo,
-            data_root=data_root,
-            data_prefix=dict(root=data_prefix),
-            test_mode=test_mode,
-            **kwargs)
+    def load_annotations(self):
 
-    def load_data_list(self):
-        """Load images and ground truth labels."""
-        root = self.data_prefix['root']
-        backend = get_file_backend(root, enable_singleton=True)
+        rank, world_size = get_dist_info()
 
-        if dist.is_main_process() and not self._check_integrity():
-            if not isinstance(backend, LocalBackend):
-                raise RuntimeError(f'The dataset on {root} is not integrated, '
-                                   f'please manually handle it.')
+        if rank == 0 and not self._check_integrity():
+            download_and_extract_archive(
+                self.url,
+                self.data_prefix,
+                filename=self.filename,
+                md5=self.tgz_md5)
 
-            if self.download:
-                download_and_extract_archive(
-                    self.url, root, filename=self.filename, md5=self.tgz_md5)
-            else:
-                raise RuntimeError(
-                    f'Cannot find {self.__class__.__name__} dataset in '
-                    f"{self.data_prefix['root']}, you can specify "
-                    '`download=True` to download automatically.')
-
-        dist.barrier()
-        assert self._check_integrity(), \
-            'Download failed or shared storage is unavailable. Please ' \
-            f'download the dataset manually through {self.url}.'
+        if world_size > 1:
+            dist.barrier()
+            assert self._check_integrity(), \
+                'Shared storage seems unavailable. ' \
+                f'Please download the dataset manually through {self.url}.'
 
         if not self.test_mode:
             downloaded_list = self.train_list
         else:
             downloaded_list = self.test_list
 
-        imgs = []
-        gt_labels = []
+        self.imgs = []
+        self.gt_labels = []
 
         # load the picked numpy arrays
-        for file_name, _ in downloaded_list:
-            file_path = join_path(root, self.base_folder, file_name)
-            entry = pickle.loads(get(file_path), encoding='latin1')
-            imgs.append(entry['data'])
-            if 'labels' in entry:
-                gt_labels.extend(entry['labels'])
-            else:
-                gt_labels.extend(entry['fine_labels'])
+        for file_name, checksum in downloaded_list:
+            file_path = os.path.join(self.data_prefix, self.base_folder,
+                                     file_name)
+            with open(file_path, 'rb') as f:
+                entry = pickle.load(f, encoding='latin1')
+                self.imgs.append(entry['data'])
+                if 'labels' in entry:
+                    self.gt_labels.extend(entry['labels'])
+                else:
+                    self.gt_labels.extend(entry['fine_labels'])
 
-        imgs = np.vstack(imgs).reshape(-1, 3, 32, 32)
-        imgs = imgs.transpose((0, 2, 3, 1))  # convert to HWC
+        self.imgs = np.vstack(self.imgs).reshape(-1, 3, 32, 32)
+        self.imgs = self.imgs.transpose((0, 2, 3, 1))  # convert to HWC
 
-        if self.CLASSES is None:
-            # The metainfo in the file has the lowest priority, therefore
-            # we only need to load it if classes is not specified.
-            self._load_meta()
+        self._load_meta()
 
-        data_list = []
-        for img, gt_label in zip(imgs, gt_labels):
-            info = {'img': img, 'gt_label': int(gt_label)}
-            data_list.append(info)
-        return data_list
+        data_infos = []
+        for img, gt_label in zip(self.imgs, self.gt_labels):
+            gt_label = np.array(gt_label, dtype=np.int64)
+            info = {'img': img, 'gt_label': gt_label}
+            data_infos.append(info)
+        return data_infos
 
     def _load_meta(self):
-        """Load categories information from metafile."""
-        root = self.data_prefix['root']
-
-        path = join_path(root, self.base_folder, self.meta['filename'])
-        md5 = self.meta.get('md5', None)
-        if not exists(path) or (md5 is not None and not check_md5(path, md5)):
+        path = os.path.join(self.data_prefix, self.base_folder,
+                            self.meta['filename'])
+        if not check_integrity(path, self.meta['md5']):
             raise RuntimeError(
                 'Dataset metadata file not found or corrupted.' +
-                ' You can use `download=True` to download it')
-        data = pickle.loads(get(path), encoding='latin1')
-        self._metainfo.setdefault('classes', data[self.meta['key']])
+                ' You can use download=True to download it')
+        with open(path, 'rb') as infile:
+            data = pickle.load(infile, encoding='latin1')
+            self.CLASSES = data[self.meta['key']]
 
     def _check_integrity(self):
-        """Check the integrity of data files."""
-        root = self.data_prefix['root']
-
+        root = self.data_prefix
         for fentry in (self.train_list + self.test_list):
             filename, md5 = fentry[0], fentry[1]
-            fpath = join_path(root, self.base_folder, filename)
-            if not exists(fpath):
-                return False
-            if md5 is not None and not check_md5(fpath, md5):
+            fpath = os.path.join(root, self.base_folder, filename)
+            if not check_integrity(fpath, md5):
                 return False
         return True
-
-    def extra_repr(self) -> List[str]:
-        """The extra repr information of the dataset."""
-        body = [f"Prefix of data: \t{self.data_prefix['root']}"]
-        return body
 
 
 @DATASETS.register_module()
 class CIFAR100(CIFAR10):
-    """`CIFAR100 <https://www.cs.toronto.edu/~kriz/cifar.html>`_ Dataset.
-
-    Args:
-        data_prefix (str): Prefix for data.
-        test_mode (bool): ``test_mode=True`` means in test phase.
-            It determines to use the training set or test set.
-        metainfo (dict, optional): Meta information for dataset, such as
-            categories information. Defaults to None.
-        data_root (str): The root directory for ``data_prefix``.
-            Defaults to ''.
-        download (bool): Whether to download the dataset if not exists.
-            Defaults to True.
-        **kwargs: Other keyword arguments in :class:`BaseDataset`.
-    """
+    """`CIFAR100 <https://www.cs.toronto.edu/~kriz/cifar.html>`_ Dataset."""
 
     base_folder = 'cifar-100-python'
     url = 'https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz'
@@ -193,4 +135,21 @@ class CIFAR100(CIFAR10):
         'key': 'fine_label_names',
         'md5': '7973b15100ade9c7d40fb424638fde48',
     }
-    METAINFO = {'classes': CIFAR100_CATEGORIES}
+    CLASSES = [
+        'apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee',
+        'beetle', 'bicycle', 'bottle', 'bowl', 'boy', 'bridge', 'bus',
+        'butterfly', 'camel', 'can', 'castle', 'caterpillar', 'cattle',
+        'chair', 'chimpanzee', 'clock', 'cloud', 'cockroach', 'couch', 'crab',
+        'crocodile', 'cup', 'dinosaur', 'dolphin', 'elephant', 'flatfish',
+        'forest', 'fox', 'girl', 'hamster', 'house', 'kangaroo', 'keyboard',
+        'lamp', 'lawn_mower', 'leopard', 'lion', 'lizard', 'lobster', 'man',
+        'maple_tree', 'motorcycle', 'mountain', 'mouse', 'mushroom',
+        'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear',
+        'pickup_truck', 'pine_tree', 'plain', 'plate', 'poppy', 'porcupine',
+        'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket', 'rose', 'sea',
+        'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake',
+        'spider', 'squirrel', 'streetcar', 'sunflower', 'sweet_pepper',
+        'table', 'tank', 'telephone', 'television', 'tiger', 'tractor',
+        'train', 'trout', 'tulip', 'turtle', 'wardrobe', 'whale',
+        'willow_tree', 'wolf', 'woman', 'worm'
+    ]

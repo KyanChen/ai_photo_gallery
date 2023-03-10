@@ -3,13 +3,12 @@
 import torch.nn as nn
 import torch.utils.checkpoint as cp
 from mmcv.cnn import (ConvModule, build_activation_layer, build_conv_layer,
-                      build_norm_layer)
+                      build_norm_layer, constant_init)
 from mmcv.cnn.bricks import DropPath
-from mmengine.model import BaseModule
-from mmengine.model.weight_init import constant_init
-from mmengine.utils.dl_utils.parrots_wrapper import _BatchNorm
+from mmcv.runner import BaseModule
+from mmcv.utils.parrots_wrapper import _BatchNorm
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 eps = 1.0e-5
@@ -399,7 +398,7 @@ class ResLayer(nn.Sequential):
         super(ResLayer, self).__init__(*layers)
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ResNet(BaseBackbone):
     """ResNet backbone.
 
@@ -656,7 +655,7 @@ class ResNet(BaseBackbone):
                     m.eval()
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ResNetV1c(ResNet):
     """ResNetV1c backbone.
 
@@ -672,7 +671,7 @@ class ResNetV1c(ResNet):
             deep_stem=True, avg_down=False, **kwargs)
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ResNetV1d(ResNet):
     """ResNetV1d backbone.
 

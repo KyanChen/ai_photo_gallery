@@ -4,11 +4,11 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 from mmcv.cnn import (ConvModule, build_activation_layer, build_conv_layer,
                       build_norm_layer)
-from mmengine.model import BaseModule, Sequential
-from mmengine.utils.dl_utils.parrots_wrapper import _BatchNorm
+from mmcv.runner import BaseModule, Sequential
+from mmcv.utils.parrots_wrapper import _BatchNorm
 from torch import nn
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from ..utils.se_layer import SELayer
 from .base_backbone import BaseBackbone
 
@@ -232,7 +232,7 @@ class RepVGGBlock(BaseModule):
 
         return fused_weight, fused_bias
 
-    def _norm_to_conv3x3(self, branch_nrom):
+    def _norm_to_conv3x3(self, branch_norm):
         """Convert a norm layer to a conv3x3-bn sequence.
 
         Args:
@@ -244,19 +244,19 @@ class RepVGGBlock(BaseModule):
         """
         input_dim = self.in_channels // self.groups
         conv_weight = torch.zeros((self.in_channels, input_dim, 3, 3),
-                                  dtype=branch_nrom.weight.dtype)
+                                  dtype=branch_norm.weight.dtype)
 
         for i in range(self.in_channels):
             conv_weight[i, i % input_dim, 1, 1] = 1
-        conv_weight = conv_weight.to(branch_nrom.weight.device)
+        conv_weight = conv_weight.to(branch_norm.weight.device)
 
         tmp_conv3x3 = self.create_conv_bn(kernel_size=3)
         tmp_conv3x3.conv.weight.data = conv_weight
-        tmp_conv3x3.norm = branch_nrom
+        tmp_conv3x3.norm = branch_norm
         return tmp_conv3x3
 
 
-class MTSPPF(BaseModule):
+class MTSPPF(nn.Module):
     """MTSPPF block for YOLOX-PAI RepVGG backbone.
 
     Args:
@@ -301,7 +301,7 @@ class MTSPPF(BaseModule):
         return self.conv2(torch.cat([x, y1, y2, self.maxpool(y2)], 1))
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class RepVGG(BaseBackbone):
     """RepVGG backbone.
 
@@ -309,48 +309,45 @@ class RepVGG(BaseBackbone):
     <https://arxiv.org/abs/2101.03697>`_
 
     Args:
-        arch (str | dict): RepVGG architecture. If use string, choose from
-            'A0', 'A1`', 'A2', 'B0', 'B1', 'B1g2', 'B1g4', 'B2', 'B2g2',
-            'B2g4', 'B3', 'B3g2', 'B3g4'  or 'D2se'. If use dict, it should
-            have below keys:
+        arch (str | dict): RepVGG architecture. If use string,
+            choose from 'A0', 'A1`', 'A2', 'B0', 'B1', 'B1g2', 'B1g4', 'B2'
+            , 'B2g2', 'B2g4', 'B3', 'B3g2', 'B3g4'  or 'D2se'. If use dict,
+             it should have below keys:
 
-            - **num_blocks** (Sequence[int]): Number of blocks in each stage.
-            - **width_factor** (Sequence[float]): Width deflator in each stage.
-            - **group_layer_map** (dict | None): RepVGG Block that declares
+            - num_blocks (Sequence[int]): Number of blocks in each stage.
+            - width_factor (Sequence[float]): Width deflator in each stage.
+            - group_layer_map (dict | None): RepVGG Block that declares
               the need to apply group convolution.
-            - **se_cfg** (dict | None): SE Layer config.
-            - **stem_channels** (int, optional): The stem channels, the final
-              stem channels will be
-              ``min(stem_channels, base_channels*width_factor[0])``.
-              If not set here, 64 is used by default in the code.
+            - se_cfg (dict | None): Se Layer config.
+            - stem_channels (int, optional): The stem channels, the final
+                 stem channels will be
+                 ``min(stem_channels, base_channels*width_factor[0])``.
+                If not set here, 64 is used by default in the code.
 
-        in_channels (int): Number of input image channels. Defaults to 3.
+        in_channels (int): Number of input image channels. Default: 3.
         base_channels (int): Base channels of RepVGG backbone, work with
             width_factor together. Defaults to 64.
-        out_indices (Sequence[int]): Output from which stages.
-            Defaults to ``(3, )``.
+        out_indices (Sequence[int]): Output from which stages. Default: (3, ).
         strides (Sequence[int]): Strides of the first block of each stage.
-            Defaults to ``(2, 2, 2, 2)``.
+            Default: (2, 2, 2, 2).
         dilations (Sequence[int]): Dilation of each stage.
-            Defaults to ``(1, 1, 1, 1)``.
+            Default: (1, 1, 1, 1).
         frozen_stages (int): Stages to be frozen (all param fixed). -1 means
-            not freezing any parameters. Defaults to -1.
-        conv_cfg (dict | None): The config dict for conv layers.
-            Defaults to None.
+            not freezing any parameters. Default: -1.
+        conv_cfg (dict | None): The config dict for conv layers. Default: None.
         norm_cfg (dict): The config dict for norm layers.
-            Defaults to ``dict(type='BN')``.
+            Default: dict(type='BN').
         act_cfg (dict): Config dict for activation layer.
-            Defaults to ``dict(type='ReLU')``.
+            Default: dict(type='ReLU').
         with_cp (bool): Use checkpoint or not. Using checkpoint will save some
-            memory while slowing down the training speed. Defaults to False.
+            memory while slowing down the training speed. Default: False.
         deploy (bool): Whether to switch the model structure to deployment
-            mode. Defaults to False.
+            mode. Default: False.
         norm_eval (bool): Whether to set norm layers to eval mode, namely,
             freeze running stats (mean and var). Note: Effect on Batch Norm
-            and its variants only. Defaults to False.
-        add_ppf (bool): Whether to use the MTSPPF block. Defaults to False.
+            and its variants only. Default: False.
+        add_ppf (bool): Whether to use the MTSPPF block. Default: False.
         init_cfg (dict or list[dict], optional): Initialization config dict.
-            Defaults to None.
     """
 
     groupwise_layers = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26]
@@ -551,7 +548,7 @@ class RepVGG(BaseBackbone):
                 act_cfg=act_cfg,
                 kernel_size=5)
         else:
-            self.ppf = nn.Identity()
+            self.ppf = None
 
     def _make_stage(self, in_channels, out_channels, num_blocks, stride,
                     dilation, next_create_block_idx, init_cfg):
@@ -589,7 +586,7 @@ class RepVGG(BaseBackbone):
         for i, stage_name in enumerate(self.stages):
             stage = getattr(self, stage_name)
             x = stage(x)
-            if i + 1 == len(self.stages):
+            if i + 1 == len(self.stages) and self.ppf is not None:
                 x = self.ppf(x)
             if i in self.out_indices:
                 outs.append(x)

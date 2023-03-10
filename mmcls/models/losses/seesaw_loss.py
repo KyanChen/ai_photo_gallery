@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mmcls.registry import MODELS
+from ..builder import LOSSES
 from .utils import weight_reduce_loss
 
 
@@ -76,7 +76,7 @@ def seesaw_ce_loss(cls_score,
     return loss
 
 
-@MODELS.register_module()
+@LOSSES.register_module()
 class SeesawLoss(nn.Module):
     """Implementation of seesaw loss.
 
@@ -91,11 +91,11 @@ class SeesawLoss(nn.Module):
         q (float): The ``q`` in the compenstation factor.
              Defaults to 2.0.
         num_classes (int): The number of classes.
-             Defaults to 1000 for the ImageNet dataset.
+             Default to 1000 for the ImageNet dataset.
         eps (float): The minimal value of divisor to smooth
              the computation of compensation factor, default to 1e-2.
         reduction (str): The method that reduces the loss to a scalar.
-             Options are "none", "mean" and "sum". Defaults to "mean".
+             Options are "none", "mean" and "sum". Default to "mean".
         loss_weight (float): The weight of the loss. Defaults to 1.0
     """
 

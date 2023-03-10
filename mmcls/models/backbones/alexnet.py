@@ -1,11 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch.nn as nn
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class AlexNet(BaseBackbone):
     """`AlexNet <https://en.wikipedia.org/wiki/AlexNet>`_ backbone.
 

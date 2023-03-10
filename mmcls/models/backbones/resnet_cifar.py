@@ -2,11 +2,11 @@
 import torch.nn as nn
 from mmcv.cnn import build_conv_layer, build_norm_layer
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .resnet import ResNet
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ResNet_CIFAR(ResNet):
     """ResNet backbone for CIFAR.
 

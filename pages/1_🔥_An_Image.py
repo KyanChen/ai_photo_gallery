@@ -1,13 +1,10 @@
-import pre_reqs
 import cv2
+import mmcv
 import numpy as np
 import streamlit as st
-from mmcls.apis import init_model
-from mmcls.apis import inference_model_topk as inference_cls_model
-from mmdet.registry import VISUALIZERS
-# from mmcls.utils import register_all_modules as register_all_modules_cls
-from mmdet.apis import init_detector, inference_detector
-from mmdet.utils import register_all_modules as register_all_modules_det
+from mmcls.apis import inference_model, init_model
+
+from mmdet.apis import inference_detector, init_detector
 import pandas as pd
 from PIL import Image
 
@@ -23,26 +20,28 @@ model_option = st.radio(
     "What\'s your inference model",
     ('cls', 'det'))
 
-parent_folder = './'
+parent_folder = '../'
 topk = st.slider('Return top-k predictions', 1, 10, 3)
+device = 'cpu'
+
 
 @st.cache_resource
 def _init_model(model_option):
     if model_option == 'cls':
-    # init model
-        model = init_model(parent_folder + 'configs/resnet/resnet50_8xb32_in1k.py',
-                       'https://download.openmmlab.com/mmclassification/v0/resnet/resnet50_8xb32_in1k_20210831-ea4938fc.pth')
-        visualizer = None
+        # init model
+        model = init_model(
+            parent_folder + 'cls_configs/resnet/resnet50_8xb32_in1k.py',
+            parent_folder + 'pretrain/resnet50_8xb32_in1k_20210831-ea4938fc.pth',
+            device=device
+        )
+
     elif model_option == 'det':
-        # register_all_modules_det()
-        model = init_detector(parent_folder + 'configs/rtmdet/rtmdet-ins_s_8xb32-300e_coco.py',
-                          'https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_s_8xb32-300e_coco/rtmdet-ins_s_8xb32-300e_coco_20221121_212604-fdc5d7ec.pth', device='cpu')
-        visualizer = VISUALIZERS.build(model.cfg.visualizer)
-        visualizer.dataset_meta = model.dataset_meta
+        model = init_detector(
+            parent_folder + 'det_configs/mask2former/mask2former_r101_lsj_8x2_50e_coco.py',
+            parent_folder + 'pretrain/mask2former_r101_lsj_8x2_50e_coco_20220426_100250-c50b6fa6.pth', device=device)
     else:
         model = None
-        visualizer = None
-    return model, visualizer
+    return model
 
 @st.cache_data
 def _get_image(my_upload=my_upload):
@@ -53,29 +52,49 @@ def _get_image(my_upload=my_upload):
     return Image.open(img_file).convert('RGB')
 
 # @st.cache_resource
-def _inference_model(img, model, visualizer, model_option):
+def _inference_model(img, model, model_option):
     img = np.array(img)
     if model_option == 'cls':
-        return_results = inference_cls_model(model, img, 10)
+        return_results = inference_model(model, img, topk=10)
         vis_img = img
     elif model_option == 'det':
-        vis_img = img.copy()
         results = inference_detector(model, img)
-        # import pdb
-        # pdb.set_trace()
-        b, h, w = results.pred_instances.masks.shape
-        vis_img = cv2.resize(vis_img, (w, h))
-        visualizer.add_datasample(
-            name='result',
-            image=vis_img,
-            data_sample=results,
-            draw_gt=False,
-            show=False)
-        vis_img = visualizer.get_image()
-        cls_names = visualizer.dataset_meta['classes']
-        return_results = {'scores': results.pred_instances.scores[:10].numpy(),
-                          'bboxes': results.pred_instances.bboxes[:10].numpy(),
-                          'labels': [cls_names[x.item()] for x in results.pred_instances.labels[:10]]
+        if hasattr(model, 'module'):
+            model = model.module
+        score_thr = 0.3
+        vis_img = model.show_result(
+            img,
+            results,
+            score_thr=score_thr,
+            bbox_color='coco',
+            text_color=(200, 200, 200),
+            mask_color='coco',
+            thickness=2
+        )
+        bbox_result, segm_result = results
+        bboxes = np.vstack(bbox_result)
+        labels = [
+            np.full(bbox.shape[0], i, dtype=np.int32)
+            for i, bbox in enumerate(bbox_result)
+        ]
+        labels = np.concatenate(labels)
+
+        # if segm_result is not None and len(labels) > 0:  # non empty
+        #     segms = mmcv.concat_list(segm_result)
+        #     if isinstance(segms[0], torch.Tensor):
+        #         segms = torch.stack(segms, dim=0).detach().cpu().numpy()
+        #     else:
+        #         segms = np.stack(segms, axis=0)
+        if score_thr > 0:
+            assert bboxes is not None and bboxes.shape[1] == 5
+            scores = bboxes[:, -1]
+            inds = scores > score_thr
+            bboxes = bboxes[inds, :]
+            labels = labels[inds]
+        cls_names = model.CLASSES
+        return_results = {'scores': bboxes[:, -1][:10],
+                          'bboxes': bboxes[:, :4][:10],
+                          'labels': [cls_names[x.item()] for x in labels[:10]]
                           }
     return return_results, vis_img
 
@@ -105,7 +124,7 @@ def plot_canvas(img, vis_img, results, model_option):
         col3.dataframe(df)
 
 
-model, visualizer = _init_model(model_option)
+model = _init_model(model_option)
 img = _get_image(my_upload)
-results, vis_img = _inference_model(img, model, visualizer, model_option)
+results, vis_img = _inference_model(img, model, model_option)
 plot_canvas(img, vis_img, results, model_option)

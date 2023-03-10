@@ -1,13 +1,13 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
-from mmengine.model.weight_init import trunc_normal_
+from mmcv.cnn.utils.weight_init import trunc_normal_
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .vision_transformer import VisionTransformer
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class DistilledVisionTransformer(VisionTransformer):
     """Distilled Vision Transformer.
 

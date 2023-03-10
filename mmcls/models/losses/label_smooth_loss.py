@@ -2,12 +2,12 @@
 import torch
 import torch.nn as nn
 
-from mmcls.registry import MODELS
+from ..builder import LOSSES
 from .cross_entropy_loss import CrossEntropyLoss
 from .utils import convert_to_one_hot
 
 
-@MODELS.register_module()
+@LOSSES.register_module()
 class LabelSmoothLoss(nn.Module):
     r"""Initializer for the label smoothed cross entropy loss.
 
@@ -24,42 +24,37 @@ class LabelSmoothLoss(nn.Module):
         label_smooth_val (float): The degree of label smoothing.
         num_classes (int, optional): Number of classes. Defaults to None.
         mode (str): Refers to notes, Options are 'original', 'classy_vision',
-            'multi_label'. Defaults to 'original'.
-        use_sigmoid (bool, optional): Whether the prediction uses sigmoid of
-            softmax. Defaults to None, which means to use sigmoid in
-            "multi_label" mode and not use in other modes.
+            'multi_label'. Defaults to 'original'
         reduction (str): The method used to reduce the loss.
             Options are "none", "mean" and "sum". Defaults to 'mean'.
         loss_weight (float):  Weight of the loss. Defaults to 1.0.
 
     Notes:
-        - if the mode is **"original"**, this will use the same label smooth
-          method as the original paper as:
+        if the mode is "original", this will use the same label smooth method
+        as the original paper as:
 
-          .. math::
-              (1-\epsilon)\delta_{k, y} + \frac{\epsilon}{K}
+        .. math::
+            (1-\epsilon)\delta_{k, y} + \frac{\epsilon}{K}
 
-          where :math:`\epsilon` is the ``label_smooth_val``, :math:`K` is the
-          ``num_classes`` and :math:`\delta_{k, y}` is Dirac delta, which
-          equals 1 for :math:`k=y` and 0 otherwise.
+        where epsilon is the `label_smooth_val`, K is the num_classes and
+        delta(k,y) is Dirac delta, which equals 1 for k=y and 0 otherwise.
 
-        - if the mode is **"classy_vision"**, this will use the same label
-          smooth method as the facebookresearch/ClassyVision repo as:
+        if the mode is "classy_vision", this will use the same label smooth
+        method as the facebookresearch/ClassyVision repo as:
 
-          .. math::
-              \frac{\delta_{k, y} + \epsilon/K}{1+\epsilon}
+        .. math::
+            \frac{\delta_{k, y} + \epsilon/K}{1+\epsilon}
 
-        - if the mode is **"multi_label"**, this will accept labels from
-          multi-label task and smoothing them as:
+        if the mode is "multi_label", this will accept labels from multi-label
+        task and smoothing them as:
 
-          .. math::
-              (1-2\epsilon)\delta_{k, y} + \epsilon
+        .. math::
+            (1-2\epsilon)\delta_{k, y} + \epsilon
     """
 
     def __init__(self,
                  label_smooth_val,
                  num_classes=None,
-                 use_sigmoid=None,
                  mode='original',
                  reduction='mean',
                  loss_weight=1.0):
@@ -87,21 +82,12 @@ class LabelSmoothLoss(nn.Module):
         self._eps = label_smooth_val
         if mode == 'classy_vision':
             self._eps = label_smooth_val / (1 + label_smooth_val)
-
         if mode == 'multi_label':
-            if not use_sigmoid:
-                from mmengine.logging import MMLogger
-                MMLogger.get_current_instance().warning(
-                    'For multi-label tasks, please set `use_sigmoid=True` '
-                    'to use binary cross entropy.')
+            self.ce = CrossEntropyLoss(use_sigmoid=True)
             self.smooth_label = self.multilabel_smooth_label
-            use_sigmoid = True if use_sigmoid is None else use_sigmoid
         else:
+            self.ce = CrossEntropyLoss(use_soft=True)
             self.smooth_label = self.original_smooth_label
-            use_sigmoid = False if use_sigmoid is None else use_sigmoid
-
-        self.ce = CrossEntropyLoss(
-            use_sigmoid=use_sigmoid, use_soft=not use_sigmoid)
 
     def generate_one_hot_like_label(self, label):
         """This function takes one-hot or index label vectors and computes one-
@@ -162,7 +148,7 @@ class LabelSmoothLoss(nn.Module):
             f'and target.shape: {one_hot_like_label.shape}'
 
         smoothed_label = self.smooth_label(one_hot_like_label)
-        return self.loss_weight * self.ce.forward(
+        return self.ce.forward(
             cls_score,
             smoothed_label,
             weight=weight,

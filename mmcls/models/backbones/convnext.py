@@ -7,14 +7,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as cp
-from mmcv.cnn.bricks import DropPath, build_activation_layer, build_norm_layer
-from mmengine.model import BaseModule, ModuleList, Sequential
-from mmengine.registry import MODELS
+from mmcv.cnn.bricks import (NORM_LAYERS, DropPath, build_activation_layer,
+                             build_norm_layer)
+from mmcv.runner import BaseModule
+from mmcv.runner.base_module import ModuleList, Sequential
 
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
-@MODELS.register_module('LN2d')
+@NORM_LAYERS.register_module('LN2d')
 class LayerNorm2d(nn.LayerNorm):
     """LayerNorm on channels for 2d images.
 
@@ -31,20 +33,12 @@ class LayerNorm2d(nn.LayerNorm):
         super().__init__(num_channels, **kwargs)
         self.num_channels = self.normalized_shape[0]
 
-    def forward(self, x, data_format='channel_first'):
+    def forward(self, x):
         assert x.dim() == 4, 'LayerNorm2d only supports inputs with shape ' \
             f'(N, C, H, W), but got tensor with shape {x.shape}'
-        if data_format == 'channel_last':
-            x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias,
-                             self.eps)
-        elif data_format == 'channel_first':
-            x = x.permute(0, 2, 3, 1)
-            x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias,
-                             self.eps)
-            # If the output is discontiguous, it may cause some unexpected
-            # problem in the downstream tasks
-            x = x.permute(0, 3, 1, 2).contiguous()
-        return x
+        return F.layer_norm(
+            x.permute(0, 2, 3, 1).contiguous(), self.normalized_shape,
+            self.weight, self.bias, self.eps).permute(0, 3, 1, 2).contiguous()
 
 
 class ConvNeXtBlock(BaseModule):
@@ -52,8 +46,6 @@ class ConvNeXtBlock(BaseModule):
 
     Args:
         in_channels (int): The number of input channels.
-        dw_conv_cfg (dict): Config of depthwise convolution.
-            Defaults to ``dict(kernel_size=7, padding=3)``.
         norm_cfg (dict): The config dict for norm layers.
             Defaults to ``dict(type='LN2d', eps=1e-6)``.
         act_cfg (dict): The config dict for activation between pointwise
@@ -81,7 +73,6 @@ class ConvNeXtBlock(BaseModule):
 
     def __init__(self,
                  in_channels,
-                 dw_conv_cfg=dict(kernel_size=7, padding=3),
                  norm_cfg=dict(type='LN2d', eps=1e-6),
                  act_cfg=dict(type='GELU'),
                  mlp_ratio=4.,
@@ -93,7 +84,11 @@ class ConvNeXtBlock(BaseModule):
         self.with_cp = with_cp
 
         self.depthwise_conv = nn.Conv2d(
-            in_channels, in_channels, groups=in_channels, **dw_conv_cfg)
+            in_channels,
+            in_channels,
+            kernel_size=7,
+            padding=3,
+            groups=in_channels)
 
         self.linear_pw_conv = linear_pw_conv
         self.norm = build_norm_layer(norm_cfg, in_channels)[1]
@@ -121,10 +116,10 @@ class ConvNeXtBlock(BaseModule):
         def _inner_forward(x):
             shortcut = x
             x = self.depthwise_conv(x)
+            x = self.norm(x)
 
             if self.linear_pw_conv:
                 x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
-            x = self.norm(x, data_format='channel_last')
 
             x = self.pointwise_conv1(x)
             x = self.act(x)
@@ -143,10 +138,11 @@ class ConvNeXtBlock(BaseModule):
             x = cp.checkpoint(_inner_forward, x)
         else:
             x = _inner_forward(x)
+
         return x
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class ConvNeXt(BaseBackbone):
     """ConvNeXt.
 
@@ -292,7 +288,7 @@ class ConvNeXt(BaseBackbone):
 
             if i >= 1:
                 downsample_layer = nn.Sequential(
-                    build_norm_layer(norm_cfg, self.channels[i - 1])[1],
+                    LayerNorm2d(self.channels[i - 1]),
                     nn.Conv2d(
                         self.channels[i - 1],
                         channels,
@@ -332,7 +328,9 @@ class ConvNeXt(BaseBackbone):
                     gap = x.mean([-2, -1], keepdim=True)
                     outs.append(norm_layer(gap).flatten(1))
                 else:
-                    outs.append(norm_layer(x))
+                    # The output of LayerNorm2d may be discontiguous, which
+                    # may cause some problem in the downstream tasks
+                    outs.append(norm_layer(x).contiguous())
 
         return tuple(outs)
 

@@ -1,13 +1,13 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch.nn as nn
 from mmcv.cnn.bricks import ConvModule
-from mmengine.model import BaseModule
+from mmcv.runner import BaseModule
 
-from mmcls.registry import MODELS
 from ..backbones.resnet import Bottleneck, ResLayer
+from ..builder import NECKS
 
 
-@MODELS.register_module()
+@NECKS.register_module()
 class HRFuseScales(BaseModule):
     """Fuse feature map of multiple scales in HRNet.
 

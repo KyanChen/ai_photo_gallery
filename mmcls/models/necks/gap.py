@@ -2,10 +2,10 @@
 import torch
 import torch.nn as nn
 
-from mmcls.registry import MODELS
+from ..builder import NECKS
 
 
-@MODELS.register_module()
+@NECKS.register_module()
 class GlobalAveragePooling(nn.Module):
     """Global Average Pooling neck.
 

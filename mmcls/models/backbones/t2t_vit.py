@@ -7,10 +7,10 @@ import torch
 import torch.nn as nn
 from mmcv.cnn import build_norm_layer
 from mmcv.cnn.bricks.transformer import FFN
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import trunc_normal_
+from mmcv.cnn.utils.weight_init import trunc_normal_
+from mmcv.runner.base_module import BaseModule, ModuleList
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from ..utils import MultiheadAttention, resize_pos_embed, to_2tuple
 from .base_backbone import BaseBackbone
 
@@ -218,30 +218,27 @@ def get_sinusoid_encoding(n_position, embed_dims):
 
     Sinusoid encoding is a kind of relative position encoding method came from
     `Attention Is All You Need<https://arxiv.org/abs/1706.03762>`_.
-
     Args:
         n_position (int): The length of the input token.
         embed_dims (int): The position embedding dimension.
-
     Returns:
         :obj:`torch.FloatTensor`: The sinusoid encoding table.
     """
 
-    def get_position_angle_vec(position):
-        return [
-            position / np.power(10000, 2 * (i // 2) / embed_dims)
-            for i in range(embed_dims)
-        ]
+    vec = torch.arange(embed_dims, dtype=torch.float64)
+    vec = (vec - vec % 2) / embed_dims
+    vec = torch.pow(10000, -vec).view(1, -1)
 
-    sinusoid_table = np.array(
-        [get_position_angle_vec(pos) for pos in range(n_position)])
-    sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
-    sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
+    sinusoid_table = torch.arange(n_position).view(-1, 1) * vec
+    sinusoid_table[:, 0::2].sin_()  # dim 2i
+    sinusoid_table[:, 1::2].cos_()  # dim 2i+1
 
-    return torch.FloatTensor(sinusoid_table).unsqueeze(0)
+    sinusoid_table = sinusoid_table.to(torch.float32)
+
+    return sinusoid_table.unsqueeze(0)
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class T2T_ViT(BaseBackbone):
     """Tokens-to-Token Vision Transformer (T2T-ViT)
 
@@ -381,8 +378,8 @@ class T2T_ViT(BaseBackbone):
 
         ckpt_pos_embed_shape = state_dict[name].shape
         if self.pos_embed.shape != ckpt_pos_embed_shape:
-            from mmengine.logging import MMLogger
-            logger = MMLogger.get_current_instance()
+            from mmcls.utils import get_root_logger
+            logger = get_root_logger()
             logger.info(
                 f'Resize the pos_embed shape from {ckpt_pos_embed_shape} '
                 f'to {self.pos_embed.shape}.')

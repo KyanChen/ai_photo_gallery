@@ -2,7 +2,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mmcls.registry import MODELS
+from ..builder import LOSSES
 from .utils import weight_reduce_loss
 
 
@@ -130,7 +130,7 @@ def binary_cross_entropy(pred,
     return loss
 
 
-@MODELS.register_module()
+@LOSSES.register_module()
 class CrossEntropyLoss(nn.Module):
     """Cross entropy loss.
 

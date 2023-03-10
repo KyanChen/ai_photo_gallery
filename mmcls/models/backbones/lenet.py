@@ -1,11 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch.nn as nn
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class LeNet5(BaseBackbone):
     """`LeNet5 <https://en.wikipedia.org/wiki/LeNet>`_ backbone.
 

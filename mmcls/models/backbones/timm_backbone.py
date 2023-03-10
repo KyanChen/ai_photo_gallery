@@ -1,9 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+try:
+    import timm
+except ImportError:
+    timm = None
+
 import warnings
 
-from mmengine.logging import MMLogger
+from mmcv.cnn.bricks.registry import NORM_LAYERS
 
-from mmcls.registry import MODELS
+from ...utils import get_root_logger
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
@@ -14,7 +20,7 @@ def print_timm_feature_info(feature_info):
         feature_info (list[dict] | timm.models.features.FeatureInfo | None):
             feature_info of timm backbone.
     """
-    logger = MMLogger.get_current_instance()
+    logger = get_root_logger()
     if feature_info is None:
         logger.warning('This backbone does not have feature_info')
     elif isinstance(feature_info, list):
@@ -29,7 +35,7 @@ def print_timm_feature_info(feature_info):
             logger.warning('Unexpected format of backbone feature_info')
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class TIMMBackbone(BaseBackbone):
     """Wrapper to use backbones from timm library.
 
@@ -63,13 +69,10 @@ class TIMMBackbone(BaseBackbone):
                  in_channels=3,
                  init_cfg=None,
                  **kwargs):
-        try:
-            import timm
-        except ImportError:
-            raise ImportError(
+        if timm is None:
+            raise RuntimeError(
                 'Failed to import timm. Please run "pip install timm". '
                 '"pip install dataclasses" may also be needed for Python 3.6.')
-
         if not isinstance(pretrained, bool):
             raise TypeError('pretrained must be bool, not str for model path')
         if features_only and checkpoint_path:
@@ -80,7 +83,7 @@ class TIMMBackbone(BaseBackbone):
 
         super(TIMMBackbone, self).__init__(init_cfg)
         if 'norm_layer' in kwargs:
-            kwargs['norm_layer'] = MODELS.get(kwargs['norm_layer'])
+            kwargs['norm_layer'] = NORM_LAYERS.get(kwargs['norm_layer'])
         self.timm_model = timm.create_model(
             model_name=model_name,
             features_only=features_only,

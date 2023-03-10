@@ -5,12 +5,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.cnn import build_activation_layer, build_norm_layer
+from mmcv.cnn import build_norm_layer
 from mmcv.cnn.bricks import DropPath
-from mmcv.cnn.bricks.transformer import PatchEmbed
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import trunc_normal_
-from mmengine.utils import to_2tuple
+from mmcv.cnn.bricks.transformer import PatchEmbed, build_activation_layer
+from mmcv.cnn.utils.weight_init import trunc_normal_
+from mmcv.runner import BaseModule, ModuleList
+from mmcv.utils import to_2tuple
 
 from ..builder import BACKBONES
 from ..utils import resize_pos_embed

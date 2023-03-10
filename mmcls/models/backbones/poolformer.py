@@ -4,9 +4,9 @@ from typing import Sequence
 import torch
 import torch.nn as nn
 from mmcv.cnn.bricks import DropPath, build_activation_layer, build_norm_layer
-from mmengine.model import BaseModule
+from mmcv.runner import BaseModule
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from .base_backbone import BaseBackbone
 
 
@@ -194,7 +194,7 @@ def basic_blocks(dim,
     return blocks
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class PoolFormer(BaseBackbone):
     """PoolFormer.
 

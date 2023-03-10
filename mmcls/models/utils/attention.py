@@ -1,27 +1,17 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import itertools
+import warnings
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.cnn.bricks.drop import build_dropout
-from mmengine.model import BaseModule
-from mmengine.model.weight_init import trunc_normal_
-from mmengine.utils import digit_version
+from mmcv.cnn.bricks.registry import DROPOUT_LAYERS
+from mmcv.cnn.bricks.transformer import build_dropout
+from mmcv.cnn.utils.weight_init import trunc_normal_
+from mmcv.runner.base_module import BaseModule
 
-from mmcls.registry import MODELS
+from ..builder import ATTENTION
 from .helpers import to_2tuple
-from .layer_scale import LayerScale
-
-# After pytorch v1.10.0, use torch.meshgrid without indexing
-# will raise extra warning. For more details,
-# refers to https://github.com/pytorch/pytorch/issues/50276
-if digit_version(torch.__version__) >= digit_version('1.10.0'):
-    from functools import partial
-    torch_meshgrid = partial(torch.meshgrid, indexing='ij')
-else:
-    torch_meshgrid = torch.meshgrid
 
 
 class WindowMSA(BaseModule):
@@ -145,16 +135,13 @@ class WindowMSAV2(BaseModule):
         embed_dims (int): Number of input channels.
         window_size (tuple[int]): The height and width of the window.
         num_heads (int): Number of attention heads.
-        qkv_bias (bool): If True, add a learnable bias to q, k, v.
+        qkv_bias (bool, optional): If True, add a learnable bias to q, k, v.
             Defaults to True.
-        attn_drop (float): Dropout ratio of attention weight.
+        attn_drop (float, optional): Dropout ratio of attention weight.
             Defaults to 0.
-        proj_drop (float): Dropout ratio of output. Defaults to 0.
-        cpb_mlp_hidden_dims (int): The hidden dimensions of the continuous
-            relative position bias network. Defaults to 512.
+        proj_drop (float, optional): Dropout ratio of output. Defaults to 0.
         pretrained_window_size (tuple(int)): The height and width of the window
-            in pre-training. Defaults to (0, 0), which means not load
-            pretrained model.
+            in pre-training.
         init_cfg (dict, optional): The extra config for initialization.
             Defaults to None.
     """
@@ -168,7 +155,8 @@ class WindowMSAV2(BaseModule):
                  proj_drop=0.,
                  cpb_mlp_hidden_dims=512,
                  pretrained_window_size=(0, 0),
-                 init_cfg=None):
+                 init_cfg=None,
+                 **kwargs):  # accept extra arguments
 
         super().__init__(init_cfg)
         self.embed_dims = embed_dims
@@ -199,7 +187,7 @@ class WindowMSAV2(BaseModule):
             self.window_size[1],
             dtype=torch.float32)
         relative_coords_table = torch.stack(
-            torch_meshgrid([relative_coords_h, relative_coords_w])).permute(
+            torch.meshgrid([relative_coords_h, relative_coords_w])).permute(
                 1, 2, 0).contiguous().unsqueeze(0)  # 1, 2*Wh-1, 2*Ww-1, 2
         if pretrained_window_size[0] > 0:
             relative_coords_table[:, :, :, 0] /= (
@@ -219,7 +207,7 @@ class WindowMSAV2(BaseModule):
         indexes_h = torch.arange(self.window_size[0])
         indexes_w = torch.arange(self.window_size[1])
         coordinates = torch.stack(
-            torch_meshgrid([indexes_h, indexes_w]), dim=0)  # 2, Wh, Ww
+            torch.meshgrid([indexes_h, indexes_w]), dim=0)  # 2, Wh, Ww
         coordinates = torch.flatten(coordinates, start_dim=1)  # 2, Wh*Ww
         # 2, Wh*Ww, Wh*Ww
         relative_coordinates = coordinates[:, :, None] - coordinates[:,
@@ -305,7 +293,7 @@ class WindowMSAV2(BaseModule):
         return x
 
 
-@MODELS.register_module()
+@ATTENTION.register_module()
 class ShiftWindowMSA(BaseModule):
     """Shift Window Multihead Self-Attention Module.
 
@@ -315,6 +303,13 @@ class ShiftWindowMSA(BaseModule):
         window_size (int): The height and width of the window.
         shift_size (int, optional): The shift step of each window towards
             right-bottom. If zero, act as regular window-msa. Defaults to 0.
+        qkv_bias (bool, optional): If True, add a learnable bias to q, k, v.
+            Defaults to True
+        qk_scale (float | None, optional): Override default qk scale of
+            head_dim ** -0.5 if set. Defaults to None.
+        attn_drop (float, optional): Dropout ratio of attention weight.
+            Defaults to 0.0.
+        proj_drop (float, optional): Dropout ratio of output. Defaults to 0.
         dropout_layer (dict, optional): The dropout_layer used before output.
             Defaults to dict(type='DropPath', drop_prob=0.).
         pad_small_map (bool): If True, pad the small feature map to the window
@@ -322,12 +317,10 @@ class ShiftWindowMSA(BaseModule):
             avoid shifting window and shrink the window size to the size of
             feature map, which is common used in classification.
             Defaults to False.
-        window_msa (Callable): To build a window multi-head attention module.
-            Defaults to :class:`WindowMSA`.
+        version (str, optional): Version of implementation of Swin
+            Transformers. Defaults to `v1`.
         init_cfg (dict, optional): The extra config for initialization.
             Defaults to None.
-        **kwargs: Other keyword arguments to build the window multi-head
-            attention module.
     """
 
     def __init__(self,
@@ -335,22 +328,42 @@ class ShiftWindowMSA(BaseModule):
                  num_heads,
                  window_size,
                  shift_size=0,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 attn_drop=0,
+                 proj_drop=0,
                  dropout_layer=dict(type='DropPath', drop_prob=0.),
                  pad_small_map=False,
+                 input_resolution=None,
+                 auto_pad=None,
                  window_msa=WindowMSA,
-                 init_cfg=None,
-                 **kwargs):
+                 msa_cfg=dict(),
+                 init_cfg=None):
         super().__init__(init_cfg)
+
+        if input_resolution is not None or auto_pad is not None:
+            warnings.warn(
+                'The ShiftWindowMSA in new version has supported auto padding '
+                'and dynamic input shape in all condition. And the argument '
+                '`auto_pad` and `input_resolution` have been deprecated.',
+                DeprecationWarning)
 
         self.shift_size = shift_size
         self.window_size = window_size
         assert 0 <= self.shift_size < self.window_size
 
+        assert issubclass(window_msa, BaseModule), \
+            'Expect Window based multi-head self-attention Module is type of' \
+            f'{type(BaseModule)}, but got {type(window_msa)}.'
         self.w_msa = window_msa(
             embed_dims=embed_dims,
-            num_heads=num_heads,
             window_size=to_2tuple(self.window_size),
-            **kwargs,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=proj_drop,
+            **msa_cfg,
         )
 
         self.drop = build_dropout(dropout_layer)
@@ -514,7 +527,6 @@ class MultiheadAttention(BaseModule):
                  qk_scale=None,
                  proj_bias=True,
                  v_shortcut=False,
-                 use_layer_scale=False,
                  init_cfg=None):
         super(MultiheadAttention, self).__init__(init_cfg=init_cfg)
 
@@ -531,12 +543,7 @@ class MultiheadAttention(BaseModule):
         self.proj = nn.Linear(embed_dims, embed_dims, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
 
-        self.out_drop = build_dropout(dropout_layer)
-
-        if use_layer_scale:
-            self.gamma1 = LayerScale(embed_dims)
-        else:
-            self.gamma1 = nn.Identity()
+        self.out_drop = DROPOUT_LAYERS.build(dropout_layer)
 
     def forward(self, x):
         B, N, _ = x.shape
@@ -550,332 +557,8 @@ class MultiheadAttention(BaseModule):
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, self.embed_dims)
         x = self.proj(x)
-        x = self.out_drop(self.gamma1(self.proj_drop(x)))
-
-        if self.v_shortcut:
-            x = v.squeeze(1) + x
-        return x
-
-
-class BEiTAttention(BaseModule):
-    """Window based multi-head self-attention (W-MSA) module with relative
-    position bias.
-
-    The initial implementation is in MMSegmentation.
-
-    Args:
-        embed_dims (int): Number of input channels.
-        num_heads (int): Number of attention heads.
-        window_size (tuple[int]): The height and width of the window.
-        use_rel_pos_bias (bool): Whether to use unique relative position bias,
-            if False, use shared relative position bias defined in backbone.
-        bias (str): The option to add leanable bias for q, k, v. If bias is
-            True, it will add leanable bias. If bias is 'qv_bias', it will only
-            add leanable bias for q, v. If bias is False, it will not add bias
-            for q, k, v. Default to 'qv_bias'.
-        qk_scale (float | None, optional): Override default qk scale of
-            head_dim ** -0.5 if set. Default: None.
-        attn_drop_rate (float): Dropout ratio of attention weight.
-            Default: 0.0
-        proj_drop_rate (float): Dropout ratio of output. Default: 0.
-        init_cfg (dict | None, optional): The Config for initialization.
-            Default: None.
-    """
-
-    def __init__(self,
-                 embed_dims,
-                 num_heads,
-                 window_size,
-                 use_rel_pos_bias,
-                 bias='qv_bias',
-                 qk_scale=None,
-                 attn_drop_rate=0.,
-                 proj_drop_rate=0.,
-                 init_cfg=None,
-                 **kwargs):
-        super().__init__(init_cfg=init_cfg)
-        self.embed_dims = embed_dims
-        self.num_heads = num_heads
-        head_embed_dims = embed_dims // num_heads
-        self.bias = bias
-        self.scale = qk_scale or head_embed_dims**-0.5
-
-        qkv_bias = bias
-        if bias == 'qv_bias':
-            self._init_qv_bias()
-            qkv_bias = False
-
-        self.window_size = window_size
-        self.use_rel_pos_bias = use_rel_pos_bias
-        self._init_rel_pos_embedding()
-
-        self.qkv = nn.Linear(embed_dims, embed_dims * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop_rate)
-        self.proj = nn.Linear(embed_dims, embed_dims)
-        self.proj_drop = nn.Dropout(proj_drop_rate)
-
-    def _init_qv_bias(self):
-        self.q_bias = nn.Parameter(torch.zeros(self.embed_dims))
-        self.v_bias = nn.Parameter(torch.zeros(self.embed_dims))
-
-    def _init_rel_pos_embedding(self):
-        if self.use_rel_pos_bias:
-            Wh, Ww = self.window_size
-            # cls to token & token 2 cls & cls to cls
-            self.num_relative_distance = (2 * Wh - 1) * (2 * Ww - 1) + 3
-            # relative_position_bias_table shape is (2*Wh-1 * 2*Ww-1 + 3, nH)
-            self.relative_position_bias_table = nn.Parameter(
-                torch.zeros(self.num_relative_distance, self.num_heads))
-
-            # get pair-wise relative position index for
-            # each token inside the window
-            coords_h = torch.arange(Wh)
-            coords_w = torch.arange(Ww)
-            # coords shape is (2, Wh, Ww)
-            coords = torch.stack(torch_meshgrid([coords_h, coords_w]))
-            # coords_flatten shape is (2, Wh*Ww)
-            coords_flatten = torch.flatten(coords, 1)
-            relative_coords = (
-                coords_flatten[:, :, None] - coords_flatten[:, None, :])
-            # relative_coords shape is (Wh*Ww, Wh*Ww, 2)
-            relative_coords = relative_coords.permute(1, 2, 0).contiguous()
-            # shift to start from 0
-            relative_coords[:, :, 0] += Wh - 1
-            relative_coords[:, :, 1] += Ww - 1
-            relative_coords[:, :, 0] *= 2 * Ww - 1
-            relative_position_index = torch.zeros(
-                size=(Wh * Ww + 1, ) * 2, dtype=relative_coords.dtype)
-            # relative_position_index shape is (Wh*Ww, Wh*Ww)
-            relative_position_index[1:, 1:] = relative_coords.sum(-1)
-            relative_position_index[0, 0:] = self.num_relative_distance - 3
-            relative_position_index[0:, 0] = self.num_relative_distance - 2
-            relative_position_index[0, 0] = self.num_relative_distance - 1
-
-            self.register_buffer('relative_position_index',
-                                 relative_position_index)
-        else:
-            self.window_size = None
-            self.relative_position_bias_table = None
-            self.relative_position_index = None
-
-    def init_weights(self):
-        super().init_weights()
-        if self.use_rel_pos_bias:
-            trunc_normal_(self.relative_position_bias_table, std=0.02)
-
-    def forward(self, x, rel_pos_bias=None):
-        """
-        Args:
-            x (tensor): input features with shape of (num_windows*B, N, C).
-            rel_pos_bias (tensor): input relative position bias with shape of
-                (num_heads, N, N).
-        """
-        B, N, C = x.shape
-
-        if self.bias == 'qv_bias':
-            k_bias = torch.zeros_like(self.v_bias, requires_grad=False)
-            qkv_bias = torch.cat((self.q_bias, k_bias, self.v_bias))
-            qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
-        else:
-            qkv = self.qkv(x)
-
-        qkv = qkv.reshape(B, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
-        if self.relative_position_bias_table is not None:
-            Wh = self.window_size[0]
-            Ww = self.window_size[1]
-            relative_position_bias = self.relative_position_bias_table[
-                self.relative_position_index.view(-1)].view(
-                    Wh * Ww + 1, Wh * Ww + 1, -1)
-            relative_position_bias = relative_position_bias.permute(
-                2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-            attn = attn + relative_position_bias.unsqueeze(0)
-
-        if rel_pos_bias is not None:
-            # use shared relative position bias
-            attn = attn + rel_pos_bias
-
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x
-
-
-class ChannelMultiheadAttention(BaseModule):
-    """Channel Multihead Self-attention Module.
-
-    This module implements channel multi-head attention that supports different
-    input dims and embed dims.
-    Args:
-        embed_dims (int): The embedding dimension.
-        num_heads (int): Parallel attention heads.
-        input_dims (int, optional): The input dimension, and if None,
-            use ``embed_dims``. Defaults to None.
-        attn_drop (float): Dropout rate of the dropout layer after the
-            attention calculation of query and key. Defaults to 0.
-        proj_drop (float): Dropout rate of the dropout layer after the
-            output projection. Defaults to 0.
-        dropout_layer (dict): The dropout config before adding the shoutcut.
-            Defaults to ``dict(type='Dropout', drop_prob=0.)``.
-        qkv_bias (bool): If True, add a learnable bias to q, k, v.
-            Defaults to False.
-        proj_bias (bool) If True, add a learnable bias to output projection.
-            Defaults to True.
-        qk_scale_type (str): The scale type of qk scale.
-            Defaults to 'learnable'. It can be 'learnable', 'fixed' or 'none'.
-        qk_scale (float, optional): If set qk_scale_type to 'none', this
-            should be specified with valid float number. Defaults to None.
-        v_shortcut (bool): Add a shortcut from value to output. It's usually
-            used if ``input_dims`` is different from ``embed_dims``.
-            Defaults to False.
-        init_cfg (dict, optional): The Config for initialization.
-            Defaults to None.
-    """
-
-    def __init__(self,
-                 embed_dims,
-                 num_heads=8,
-                 input_dims=None,
-                 attn_drop=0.,
-                 proj_drop=0.,
-                 dropout_layer=dict(type='Dropout', drop_prob=0.),
-                 qkv_bias=False,
-                 proj_bias=True,
-                 qk_scale_type='learnable',
-                 qk_scale=None,
-                 v_shortcut=False,
-                 init_cfg=None):
-        super().__init__(init_cfg)
-
-        self.input_dims = input_dims or embed_dims
-        self.embed_dims = embed_dims
-        self.num_heads = num_heads
-        self.v_shortcut = v_shortcut
-
-        self.head_dims = embed_dims // num_heads
-        if qk_scale_type == 'learnable':
-            self.scale = nn.Parameter(torch.ones(num_heads, 1, 1))
-        elif qk_scale_type == 'fixed':
-            self.scale = self.head_dims**-0.5
-        elif qk_scale_type == 'none':
-            assert qk_scale is not None
-            self.scale = qk_scale
-
-        self.qkv = nn.Linear(self.input_dims, embed_dims * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(embed_dims, embed_dims, bias=proj_bias)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-        self.out_drop = build_dropout(dropout_layer)
-
-    def forward(self, x):
-        B, N, _ = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads,
-                                  self.head_dims).permute(2, 0, 3, 1, 4)
-
-        q, k, v = [item.transpose(-2, -1) for item in [qkv[0], qkv[1], qkv[2]]]
-
-        q, k = F.normalize(q, dim=-1), F.normalize(k, dim=-1)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-
-        x = (attn @ v).permute(0, 3, 1, 2).reshape(B, N, self.embed_dims)
-        x = self.proj(x)
         x = self.out_drop(self.proj_drop(x))
 
         if self.v_shortcut:
-            x = qkv[2].squeeze(1) + x
-        return x
-
-
-class LeAttention(BaseModule):
-    """LeViT Attention. Multi-head attention with attention bias,  which is
-    proposed in `LeViT: a Vision Transformer in ConvNet’s Clothing for Faster
-    Inference<https://arxiv.org/abs/2104.01136>`_
-
-    Args:
-        dim (int): Number of input channels.
-        num_heads (int): Number of attention heads. Default: 8.
-        key_dim (int): Dimension of key. Default: None.
-        attn_ratio (int): Ratio of attention heads. Default: 8.
-        resolution (tuple[int]): Input resolution. Default: (16, 16).
-        init_cfg (dict, optional): The Config for initialization.
-    """
-
-    def __init__(self,
-                 dim,
-                 key_dim,
-                 num_heads=8,
-                 attn_ratio=4,
-                 resolution=(14, 14),
-                 init_cfg=None):
-        super().__init__(init_cfg=init_cfg)
-        # (h, w)
-        assert isinstance(resolution, tuple) and len(resolution) == 2
-        self.num_heads = num_heads
-        self.scale = key_dim**-0.5
-        self.key_dim = key_dim
-        self.nh_kd = nh_kd = key_dim * num_heads
-        self.d = int(attn_ratio * key_dim)
-        self.dh = int(attn_ratio * key_dim) * num_heads
-        self.attn_ratio = attn_ratio
-        h = self.dh + nh_kd * 2
-
-        self.norm = nn.LayerNorm(dim)
-        self.qkv = nn.Linear(dim, h)
-        self.proj = nn.Linear(self.dh, dim)
-
-        points = list(
-            itertools.product(range(resolution[0]), range(resolution[1])))
-        N = len(points)
-        attention_offsets = {}
-        idxs = []
-        for p1 in points:
-            for p2 in points:
-                offset = (abs(p1[0] - p2[0]), abs(p1[1] - p2[1]))
-                if offset not in attention_offsets:
-                    attention_offsets[offset] = len(attention_offsets)
-                idxs.append(attention_offsets[offset])
-        self.attention_biases = torch.nn.Parameter(
-            torch.zeros(num_heads, len(attention_offsets)))
-        self.register_buffer(
-            'attention_bias_idxs',
-            torch.LongTensor(idxs).view(N, N),
-            persistent=False)
-
-    @torch.no_grad()
-    def train(self, mode=True):
-        super().train(mode)
-        if mode and hasattr(self, 'ab'):
-            del self.ab
-        else:
-            self.ab = self.attention_biases[:, self.attention_bias_idxs]
-
-    def forward(self, x):  # x (B,N,C)
-        B, N, _ = x.shape
-
-        # Normalization
-        x = self.norm(x)
-
-        qkv = self.qkv(x)
-        # (B, N, num_heads, d)
-        q, k, v = qkv.view(B, N, self.num_heads,
-                           -1).split([self.key_dim, self.key_dim, self.d],
-                                     dim=3)
-        # (B, num_heads, N, d)
-        q = q.permute(0, 2, 1, 3)
-        k = k.permute(0, 2, 1, 3)
-        v = v.permute(0, 2, 1, 3)
-
-        attn = ((q @ k.transpose(-2, -1)) * self.scale +
-                (self.attention_biases[:, self.attention_bias_idxs]
-                 if self.training else self.ab))
-        attn = attn.softmax(dim=-1)
-        x = (attn @ v).transpose(1, 2).reshape(B, N, self.dh)
-        x = self.proj(x)
+            x = v.squeeze(1) + x
         return x

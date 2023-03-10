@@ -1,6 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class LayerScale(nn.Module):
@@ -9,10 +9,10 @@ class LayerScale(nn.Module):
     Args:
         dim (int): Dimension of input features.
         inplace (bool): inplace: can optionally do the
-            operation in-place. Defaults to False.
-        data_format (str): The input data format, could be 'channels_last'
-             or 'channels_first', representing (B, C, H, W) and
-             (B, N, C) format data respectively. Defaults to 'channels_last'.
+            operation in-place. Default: ``False``
+        data_format (str): The input data format, can be 'channels_last'
+             and 'channels_first', representing (B, C, H, W) and
+             (B, N, C) format data respectively.
     """
 
     def __init__(self,

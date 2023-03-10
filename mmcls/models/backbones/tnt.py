@@ -5,10 +5,10 @@ import torch
 import torch.nn as nn
 from mmcv.cnn import build_norm_layer
 from mmcv.cnn.bricks.transformer import FFN, MultiheadAttention
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import trunc_normal_
+from mmcv.cnn.utils.weight_init import trunc_normal_
+from mmcv.runner.base_module import BaseModule, ModuleList
 
-from mmcls.registry import MODELS
+from ..builder import BACKBONES
 from ..utils import to_2tuple
 from .base_backbone import BaseBackbone
 
@@ -33,8 +33,8 @@ class TransformerBlock(BaseModule):
             layer normalization
         batch_first (bool): Key, Query and Value are shape of
             (batch, n, embed_dim) or (n, batch, embed_dim).
-            (batch, n, embed_dim) is common case in CV.  Defaults to False
-        init_cfg (dict, optional): Initialization config dict. Defaults to None
+            (batch, n, embed_dim) is common case in CV.  Default to False
+        init_cfg (dict, optional): Initialization config dict. Default to None
     """
 
     def __init__(self,
@@ -95,7 +95,7 @@ class TnTLayer(BaseModule):
             Defaults to empty dict.
         norm_cfg (dict): Config dict for normalization layer. Default
             layer normalization
-        init_cfg (dict, optional): Initialization config dict. Defaults to None
+        init_cfg (dict, optional): Initialization config dict. Default to None
     """
 
     def __init__(self,
@@ -199,7 +199,7 @@ class PixelEmbed(BaseModule):
         return x
 
 
-@MODELS.register_module()
+@BACKBONES.register_module()
 class TNT(BaseBackbone):
     """Transformer in Transformer.
 
@@ -212,9 +212,9 @@ class TNT(BaseBackbone):
     Args:
         arch (str | dict): Vision Transformer architecture
             Default: 'b'
-        img_size (int | tuple): Input image size. Defaults to 224
+        img_size (int | tuple): Input image size. Default to 224
         patch_size (int | tuple): The patch size. Deault to 16
-        in_channels (int): Number of input channels. Defaults to 3
+        in_channels (int): Number of input channels. Default to 3
         ffn_ratio (int): A ratio to calculate the hidden_dims in ffn layer.
             Default: 4
         qkv_bias (bool): Enable bias for qkv if True. Default False
