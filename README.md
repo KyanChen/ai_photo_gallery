@@ -4,7 +4,7 @@ emoji: 🌖
 colorFrom: gray
 colorTo: purple
 sdk: streamlit
-sdk_version: 1.17.0
+sdk_version: 1.20.0
 app_file: main_page.py
 pinned: false
 ---
