@@ -1,17 +1,11 @@
-import pre_reqs
 import glob
 import os.path
 
 import cv2
 import numpy as np
 import streamlit as st
-from mmcls.apis import init_model
-from mmcls.apis import inference_model_topk as inference_cls_model
-from mmdet.registry import VISUALIZERS
-# from mmcls.utils import register_all_modules as register_all_modules_cls
-from mmdet.apis import init_detector, inference_detector
-from mmdet.utils import register_all_modules as register_all_modules_det
-import pandas as pd
+from mmcls.apis import inference_model, init_model
+from mmdet.apis import inference_detector, init_detector
 from PIL import Image
 
 st.set_page_config(page_title="📷 A Folder Demo", page_icon="📷", layout='wide')
@@ -24,27 +18,45 @@ my_upload = st.sidebar.file_uploader("Upload multi images",  type=["png", "jpg",
 
 col1, col2 = st.columns(2)
 parent_folder = './'
+device = 'cpu'
 
 @st.cache_resource
 def _init_model_return_results(imgs):
-    cls_model = init_model(parent_folder + 'configs/resnet/resnet50_8xb32_in1k.py',
-                       'https://download.openmmlab.com/mmclassification/v0/resnet/resnet50_8xb32_in1k_20210831-ea4938fc.pth')
+    cls_model = init_model(
+        parent_folder + 'cls_configs/resnet/resnet50_8xb32_in1k.py',
+        parent_folder + 'pretrain/resnet50_8xb32_in1k_20210831-ea4938fc.pth',
+        device=device
+    )
+
+    det_model = init_detector(
+        parent_folder + 'det_configs/mask2former/mask2former_r50_lsj_8x2_50e_coco.py',
+        parent_folder + 'pretrain/mask2former_r50_lsj_8x2_50e_coco_20220506_191028-8e96e88b.pth', device=device)
+
     imgs = [np.array(x) for x in imgs]
     results = {}
 
     for idx, img in enumerate(imgs):
-        return_results = inference_cls_model(cls_model, img, 5)
+        return_results = inference_model(cls_model, img, topk=3)
         results[idx] = set(np.array(return_results["pred_class"])[return_results["pred_score"] > 0.35])
 
-        det_model = init_detector(parent_folder + 'configs/rtmdet/rtmdet-ins_s_8xb32-300e_coco.py',
-                                  'https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_s_8xb32-300e_coco/rtmdet-ins_s_8xb32-300e_coco_20221121_212604-fdc5d7ec.pth',
-                                  device='cpu')
-        dataset_meta = det_model.dataset_meta
         return_results = inference_detector(det_model, img)
-        cls_names = dataset_meta['classes']
-        scores = return_results.pred_instances.scores.numpy()[:10]
-        labels = np.array([cls_names[x.item()] for x in return_results.pred_instances.labels[:10]])
-        results[idx] |= set(labels[scores > 0.35])
+        cls_names = det_model.CLASSES
+        bbox_result, segm_result = return_results
+
+        bboxes = np.vstack(bbox_result)
+        labels = [
+            np.full(bbox.shape[0], i, dtype=np.int32)
+            for i, bbox in enumerate(bbox_result)
+        ]
+        labels = np.concatenate(labels)
+        score_thr = 0.25
+        scores = bboxes[:, -1]
+        inds = scores > score_thr
+        bboxes = bboxes[inds, :]
+        labels = labels[inds]
+        scores = bboxes[:, -1][:10]
+        labels = np.array([cls_names[x.item()] for x in labels[:10]])
+        results[idx] |= set(labels[scores > score_thr])
 
     class2idx = {}
     for k, v in results.items():

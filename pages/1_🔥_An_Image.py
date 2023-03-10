@@ -20,7 +20,7 @@ model_option = st.radio(
     "What\'s your inference model",
     ('cls', 'det'))
 
-parent_folder = '../'
+parent_folder = './'
 topk = st.slider('Return top-k predictions', 1, 10, 3)
 device = 'cpu'
 
@@ -37,8 +37,8 @@ def _init_model(model_option):
 
     elif model_option == 'det':
         model = init_detector(
-            parent_folder + 'det_configs/mask2former/mask2former_r101_lsj_8x2_50e_coco.py',
-            parent_folder + 'pretrain/mask2former_r101_lsj_8x2_50e_coco_20220426_100250-c50b6fa6.pth', device=device)
+            parent_folder + 'det_configs/mask2former/mask2former_r50_lsj_8x2_50e_coco.py',
+            parent_folder + 'pretrain/mask2former_r50_lsj_8x2_50e_coco_20220506_191028-8e96e88b.pth', device=device)
     else:
         model = None
     return model
@@ -61,7 +61,7 @@ def _inference_model(img, model, model_option):
         results = inference_detector(model, img)
         if hasattr(model, 'module'):
             model = model.module
-        score_thr = 0.3
+        score_thr = 0.25
         vis_img = model.show_result(
             img,
             results,
@@ -85,7 +85,7 @@ def _inference_model(img, model, model_option):
         #         segms = torch.stack(segms, dim=0).detach().cpu().numpy()
         #     else:
         #         segms = np.stack(segms, axis=0)
-        if score_thr > 0:
+        if score_thr > 0.:
             assert bboxes is not None and bboxes.shape[1] == 5
             scores = bboxes[:, -1]
             inds = scores > score_thr

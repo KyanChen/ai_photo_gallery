@@ -4,7 +4,7 @@ from mmcv.runner.hooks import HOOKS, Hook
 from mmcv.utils import is_seq_of
 
 
-@HOOKS.register_module()
+@HOOKS.register_module(name='ClassNumCheckHook', force=True)
 class ClassNumCheckHook(Hook):
 
     def _check_head(self, runner, dataset):
