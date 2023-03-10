@@ -4,3 +4,4 @@ mmsegmentation
 .idea
 .DS_Store
 __pycache__
+pretrain
